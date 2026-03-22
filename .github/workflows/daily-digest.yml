@@ -1,0 +1,52 @@
+name: Daily Morning Digest
+
+on:
+  schedule:
+    # 6:00 AM GMT every day
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force regeneration even if digest exists'
+        required: false
+        default: 'false'
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger digest generation
+        run: |
+          RESPONSE=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            -X POST "${{ secrets.ESPRESSO_URL }}/api/digest/generate" \
+            -H "x-admin-key: ${{ secrets.ESPRESSO_ADMIN_KEY }}" \
+            -H "Content-Type: application/json")
+          
+          echo "HTTP status: $RESPONSE"
+          echo "Response body:"
+          cat /tmp/response.json
+          
+          if [ "$RESPONSE" != "200" ]; then
+            echo "❌ Generation failed with status $RESPONSE"
+            exit 1
+          fi
+          
+          echo "✅ Digest generated successfully"
+
+      - name: Auto-publish if configured
+        if: vars.AUTO_PUBLISH == 'true'
+        run: |
+          # Get the latest digest ID
+          DIGEST=$(curl -s \
+            "${{ secrets.ESPRESSO_URL }}/api/digests" \
+            -H "x-admin-key: ${{ secrets.ESPRESSO_ADMIN_KEY }}")
+          
+          DIGEST_ID=$(echo $DIGEST | python3 -c "import sys,json; data=json.load(sys.stdin); print(data[0]['id'] if data else '')")
+          
+          if [ -n "$DIGEST_ID" ]; then
+            curl -s -X POST "${{ secrets.ESPRESSO_URL }}/api/digest/$DIGEST_ID/publish" \
+              -H "x-admin-key: ${{ secrets.ESPRESSO_ADMIN_KEY }}"
+            echo "✅ Digest $DIGEST_ID published"
+          fi

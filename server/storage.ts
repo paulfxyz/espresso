@@ -1,48 +1,119 @@
+/**
+ * @file server/storage.ts
+ * @author Paul Fleury <hello@paulfleury.com>
+ * @version 0.2.0
+ *
+ * Espresso — SQLite Storage Layer
+ *
+ * Context:
+ *   All application state lives in a single SQLite file (espresso.db).
+ *   This file is the sole persistence layer — no Redis, no external DB.
+ *   Drizzle ORM provides type-safe queries; better-sqlite3 is synchronous
+ *   (no async/await needed for DB ops).
+ *
+ * Schema overview:
+ *   links   — every URL submitted by the user or auto-fetched from RSS
+ *   digests — one row per day; storiesJson holds the full DigestStory[]
+ *   config  — key/value store for OPENROUTER_KEY and ADMIN_KEY
+ *
+ * Auto-migration:
+ *   Tables are created with CREATE TABLE IF NOT EXISTS on startup.
+ *   This means the app works out-of-the-box with no migration command.
+ *   For future schema changes (adding columns), use ALTER TABLE in the
+ *   migration block below — SQLite supports ADD COLUMN without rebuild.
+ *
+ * Performance notes:
+ *   WAL mode is enabled — this gives significantly better read concurrency
+ *   and is the recommended mode for any SQLite database with concurrent
+ *   readers (the HTTP server + cron both read the DB).
+ *   All queries return synchronously — no connection pool needed.
+ *
+ * Design decision — why SQLite and not Postgres:
+ *   Espresso is a personal tool. One user, one digest per day, ~100 links/month.
+ *   SQLite is zero-infrastructure, file-based (easy backup: cp espresso.db),
+ *   and perfectly sufficient at this scale. Switching to Postgres later would
+ *   require changing only this file and the schema — the rest of the app is
+ *   storage-agnostic through the IStorage interface.
+ */
+
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { eq, isNull, and, desc } from "drizzle-orm";
-import { links, digests, config, type Link, type InsertLink, type Digest, type InsertDigest } from "@shared/schema";
+import { eq, isNull, desc } from "drizzle-orm";
+import {
+  links,
+  digests,
+  config,
+  type Link,
+  type InsertLink,
+  type Digest,
+  type InsertDigest,
+} from "@shared/schema";
 import path from "path";
-import fs from "fs";
 
-const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), "espresso.db");
+// ─── Database Initialisation ──────────────────────────────────────────────────
+
+const DB_PATH =
+  process.env.DB_PATH || path.join(process.cwd(), "espresso.db");
+
 const sqlite = new Database(DB_PATH);
+
+// WAL mode: better read concurrency, recommended for server workloads
 sqlite.pragma("journal_mode = WAL");
+// Enforce foreign key constraints (not used yet, but good practice)
+sqlite.pragma("foreign_keys = ON");
+
 const db = drizzle(sqlite);
 
-// Auto-migrate
+// ─── Auto-migration ───────────────────────────────────────────────────────────
+// Uses CREATE TABLE IF NOT EXISTS — safe to run on every startup.
+// To add a column in a future version: ALTER TABLE links ADD COLUMN new_col TEXT;
+
 sqlite.exec(`
   CREATE TABLE IF NOT EXISTS links (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    url TEXT NOT NULL,
-    title TEXT,
-    og_image TEXT,
-    content_hash TEXT,
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    url           TEXT    NOT NULL,
+    title         TEXT,
+    og_image      TEXT,
+    content_hash  TEXT,
     extracted_text TEXT,
-    source_type TEXT DEFAULT 'article',
-    submitted_at TEXT NOT NULL,
-    processed_at TEXT,
-    digest_id INTEGER,
-    notes TEXT
+    source_type   TEXT    DEFAULT 'article',
+    submitted_at  TEXT    NOT NULL,
+    processed_at  TEXT,
+    digest_id     INTEGER,
+    notes         TEXT
   );
 
   CREATE TABLE IF NOT EXISTS digests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'draft',
-    stories_json TEXT NOT NULL,
-    closing_quote TEXT,
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    date                 TEXT    NOT NULL UNIQUE,
+    status               TEXT    NOT NULL DEFAULT 'draft',
+    stories_json         TEXT    NOT NULL,
+    closing_quote        TEXT,
     closing_quote_author TEXT,
-    generated_at TEXT,
-    published_at TEXT
+    generated_at         TEXT,
+    published_at         TEXT
   );
 
   CREATE TABLE IF NOT EXISTS config (
-    key TEXT PRIMARY KEY,
+    key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  -- Index on submitted_at for efficient unprocessed link queries
+  CREATE INDEX IF NOT EXISTS idx_links_processed ON links (processed_at);
+  -- Index on digest date for fast lookup by date
+  CREATE INDEX IF NOT EXISTS idx_digests_date ON digests (date);
+  -- Index on digest status for fast latest-published query
+  CREATE INDEX IF NOT EXISTS idx_digests_status ON digests (status, date);
 `);
 
+// ─── Storage Interface ────────────────────────────────────────────────────────
+
+/**
+ * IStorage defines the contract between the pipeline/routes and the DB.
+ * Everything goes through this interface — routes never import drizzle directly.
+ * This makes it trivial to swap SQLite for Postgres later.
+ */
 export interface IStorage {
   // Links
   createLink(link: InsertLink): Link;
@@ -66,21 +137,29 @@ export interface IStorage {
   setConfig(key: string, value: string): void;
 }
 
+// ─── Implementation ───────────────────────────────────────────────────────────
+
 class Storage implements IStorage {
-  // Links
+  // ── Links ──────────────────────────────────────────────────────────────────
+
   createLink(link: InsertLink): Link {
-    const now = new Date().toISOString();
-    return db.insert(links).values({ ...link, submittedAt: now }).returning().get();
+    return db
+      .insert(links)
+      .values({ ...link, submittedAt: new Date().toISOString() })
+      .returning()
+      .get();
   }
 
   getLink(id: number): Link | undefined {
     return db.select().from(links).where(eq(links.id, id)).get();
   }
 
+  /** Returns all links ordered by most recent first */
   getAllLinks(): Link[] {
     return db.select().from(links).orderBy(desc(links.id)).all();
   }
 
+  /** Returns links that haven't been used in any digest yet */
   getUnprocessedLinks(): Link[] {
     return db.select().from(links).where(isNull(links.processedAt)).all();
   }
@@ -93,7 +172,8 @@ class Storage implements IStorage {
     db.delete(links).where(eq(links.id, id)).run();
   }
 
-  // Digests
+  // ── Digests ────────────────────────────────────────────────────────────────
+
   createDigest(digest: InsertDigest): Digest {
     return db.insert(digests).values(digest).returning().get();
   }
@@ -106,13 +186,17 @@ class Storage implements IStorage {
     return db.select().from(digests).where(eq(digests.date, date)).get();
   }
 
+  /** Most recent published digest — used by the public reader endpoint */
   getLatestPublishedDigest(): Digest | undefined {
-    return db.select().from(digests)
+    return db
+      .select()
+      .from(digests)
       .where(eq(digests.status, "published"))
       .orderBy(desc(digests.date))
       .get();
   }
 
+  /** All digests, newest first — used by admin panel */
   getAllDigests(): Digest[] {
     return db.select().from(digests).orderBy(desc(digests.date)).all();
   }
@@ -125,14 +209,20 @@ class Storage implements IStorage {
     db.delete(digests).where(eq(digests.id, id)).run();
   }
 
-  // Config
+  // ── Config ─────────────────────────────────────────────────────────────────
+
   getConfig(key: string): string | undefined {
     const row = db.select().from(config).where(eq(config.key, key)).get();
     return row?.value;
   }
 
+  /**
+   * Upsert a config value.
+   * Uses ON CONFLICT DO UPDATE (SQLite UPSERT) — safe to call repeatedly.
+   */
   setConfig(key: string, value: string): void {
-    db.insert(config).values({ key, value })
+    db.insert(config)
+      .values({ key, value })
       .onConflictDoUpdate({ target: config.key, set: { value } })
       .run();
   }

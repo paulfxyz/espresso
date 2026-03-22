@@ -7,7 +7,7 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-07405E?style=for-the-badge&logo=sqlite&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
-![Version](https://img.shields.io/badge/version-0.1.0--beta-orange?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-0.2.0-orange?style=for-the-badge)
 ![Self-hosted](https://img.shields.io/badge/self--hosted-one_api_key-blue?style=for-the-badge)
 
 **Your personal AI-powered morning news digest. Self-hosted. One API key. Inspired by The Economist Espresso.**

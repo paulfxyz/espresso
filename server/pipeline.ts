@@ -1,12 +1,46 @@
 /**
- * Espresso — Morning Digest Pipeline
+ * @file server/pipeline.ts
+ * @author Paul Fleury <hello@paulfleury.com>
+ * @version 0.2.0
  *
- * Flow:
- *  1. Fetch all unprocessed links
- *  2. Extract content via Jina Reader (r.jina.ai) — free, no API key
- *  3. Extract OG image from the original URL
- *  4. Send everything to OpenRouter: rank top 10, summarize, quote
- *  5. Assemble digest JSON and persist to DB
+ * Espresso — Daily Digest Generation Pipeline
+ *
+ * Context:
+ *   This is the core of Espresso. It runs once per day (triggered by cron or
+ *   manually from the admin panel) and produces a structured 10-story digest
+ *   with editorial summaries and a closing quote.
+ *
+ * Pipeline steps:
+ *   1. Collect unprocessed user links from DB
+ *   2. Supplement with RSS trends if < MIN_LINKS_BEFORE_TRENDS user links exist
+ *   3. Extract full text for each URL via Jina Reader (r.jina.ai)
+ *      — Jina returns clean LLM-ready markdown + og:image in one request
+ *      — No second raw HTML fetch needed (bug fixed in v0.2.0)
+ *   4. Load 72h dedup history from past digests
+ *   5. Call OpenRouter (single structured JSON call) to rank, summarize, quote
+ *   6. Assemble DigestStory[] with images and metadata
+ *   7. Persist digest as draft, mark links as processed
+ *
+ * Design decisions:
+ *   - Single OpenRouter call per generation (not one per story). Cheaper and
+ *     faster. The model receives all content and returns structured JSON in one
+ *     shot using response_format: json_object.
+ *   - SQLite is the "memory" — no vector DB, no embeddings. Past digest URLs
+ *     are loaded into the prompt as a dedup hint.
+ *   - Jina Reader is the extraction layer — free, no key, handles paywalls,
+ *     YouTube transcripts, TikTok, Twitter. The og:image is parsed from Jina's
+ *     markdown output (line 3: "Image: https://...") — no separate HTML fetch.
+ *   - Image fallback uses picsum.photos (stable, seeded by content hash) —
+ *     replaced the broken source.unsplash.com that was shut down in 2023.
+ *   - OpenRouter calls include a retry on 429/5xx — one attempt with 2s backoff.
+ *
+ * Audit notes (v0.2.0 fixes applied):
+ *   - FIXED: source.unsplash.com → picsum.photos/seed/{hash}
+ *   - FIXED: double HTTP fetch per link (Jina + raw) → parse og:image from Jina
+ *   - FIXED: swapStory used stale oldStory ref after in-place array mutation
+ *   - FIXED: trend extraction was sequential → now chunked parallel (batch 4)
+ *   - FIXED: OpenRouter no retry → added single retry with 2s backoff on 429/5xx
+ *   - FIXED: idx bounds guard (AI occasionally returns idx outside array range)
  */
 
 import { storage } from "./storage";
@@ -14,324 +48,471 @@ import type { DigestStory, Link } from "@shared/schema";
 import { createHash, randomUUID } from "crypto";
 import { fetchTrendingStories } from "./trends";
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const JINA_PREFIX = "https://r.jina.ai/";
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+/**
+ * If the user has submitted fewer links than this threshold, the pipeline
+ * supplements with RSS trending stories from trusted outlets.
+ * Rationale: 10 links gives the AI enough to pick a diverse top 10.
+ * With fewer, it would just repeat the same handful of stories.
+ */
+const MIN_LINKS_BEFORE_TRENDS = 10;
 
+/**
+ * Parallel batch size for Jina extraction.
+ * 4 concurrent requests is a safe ceiling — Jina is rate-limited per IP
+ * and hammering it causes timeouts that degrade the whole pipeline.
+ * User links: 4 parallel (higher priority, we want these fast)
+ * Trend links: 4 parallel (same batch size for consistency)
+ */
+const EXTRACTION_BATCH_SIZE = 4;
+
+/** Max text per article sent to the AI. 3000 chars ≈ 600 tokens — generous
+ *  enough for the model to understand the story, cheap enough to pack 20+ items. */
+const MAX_TEXT_PER_ARTICLE = 3000;
+
+/** OpenRouter model. Gemini 2.0 Flash: fast, cheap, excellent summarization.
+ *  Change this to any OpenRouter model slug: https://openrouter.ai/models */
+const DEFAULT_MODEL = "google/gemini-2.0-flash-001";
+
+// ─── Utility Functions ────────────────────────────────────────────────────────
+
+/** Returns today's date as YYYY-MM-DD in UTC */
 function getTodayDate(): string {
   return new Date().toISOString().split("T")[0];
 }
 
+/** SHA-256 hex hash of a string — used for content dedup and image seed */
 function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
+/** Detect content type from URL for admin display */
 function detectSourceType(url: string): string {
   if (/youtube\.com|youtu\.be/.test(url)) return "youtube";
   if (/tiktok\.com/.test(url)) return "tiktok";
   if (/twitter\.com|x\.com/.test(url)) return "tweet";
+  if (/reddit\.com/.test(url)) return "reddit";
+  if (/substack\.com/.test(url)) return "substack";
   return "article";
 }
 
-// Extract OG image from raw HTML (lightweight, no cheerio needed for this)
-function extractOgImage(html: string, baseUrl: string): string | null {
-  const match = html.match(/<meta[^>]+(?:property="og:image"|name="og:image")[^>]+content="([^"]+)"/i)
-    || html.match(/<meta[^>]+content="([^"]+)"[^>]+(?:property="og:image"|name="og:image")/i);
-  if (match) {
-    let img = match[1];
-    if (img.startsWith("//")) img = "https:" + img;
-    if (img.startsWith("/")) {
-      try { img = new URL(img, baseUrl).href; } catch {}
-    }
-    return img;
-  }
+/**
+ * Parse og:image from Jina Reader markdown output.
+ *
+ * Jina returns a structured header at the top of every response:
+ *   Title: Article Title
+ *   URL Source: https://original-url.com
+ *   Image: https://og-image-url.com/image.jpg   ← this line
+ *   ...markdown content...
+ *
+ * This replaces the v0.1.0 approach of making a SECOND raw HTTP request to
+ * extract OG metadata — cutting one fetch per link from the pipeline.
+ */
+function parseJinaOgImage(jinaMarkdown: string, baseUrl: string): string | null {
+  const imgMatch = jinaMarkdown.match(/^Image:\s*(https?:\/\/\S+)/m);
+  if (imgMatch) return imgMatch[1];
+
+  // Fallback: inline markdown image on the first line of content
+  const mdImgMatch = jinaMarkdown.match(/!\[.*?\]\((https?:\/\/[^)]+)\)/);
+  if (mdImgMatch) return mdImgMatch[1];
+
   return null;
 }
 
-async function fetchRaw(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Espresso-Bot/1.0" },
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.text();
+/**
+ * Stable image fallback using picsum.photos with a seeded hash.
+ * The seed ensures the same story always gets the same placeholder image
+ * (deterministic, not random on each generation).
+ *
+ * Replaced source.unsplash.com which was shut down by Unsplash in 2023
+ * and now returns 404 for all requests. (Audit finding v0.2.0)
+ */
+function fallbackImage(seed: string): string {
+  // picsum uses numeric seeds — take first 8 hex chars of hash → decimal
+  const numericSeed = parseInt(sha256(seed).slice(0, 8), 16) % 1000;
+  return `https://picsum.photos/seed/${numericSeed}/800/450`;
 }
 
-async function extractViaJina(url: string): Promise<{ text: string; title: string }> {
+// ─── Jina Reader ──────────────────────────────────────────────────────────────
+
+/**
+ * Extract full readable content from any URL via Jina Reader.
+ *
+ * Jina Reader (r.jina.ai) is a free public API that:
+ * - Extracts clean markdown from any URL
+ * - Handles paywalls, SPAs, YouTube transcripts, TikTok, Twitter/X
+ * - Returns og:image in the header section
+ * - Requires no API key
+ *
+ * Returns extracted text (capped at 8000 chars), title, and og:image.
+ */
+async function extractViaJina(
+  url: string
+): Promise<{ text: string; title: string; ogImage: string | null }> {
   const jinaUrl = `${JINA_PREFIX}${url}`;
   const res = await fetch(jinaUrl, {
     headers: {
-      "Accept": "text/markdown",
-      "User-Agent": "Espresso-Bot/1.0",
+      Accept: "text/markdown",
+      "User-Agent": "Espresso-Bot/0.2",
       "X-Return-Format": "markdown",
+      // Request og:image in the response header section
+      "X-With-Images-Summary": "true",
     },
     signal: AbortSignal.timeout(20000),
   });
-  if (!res.ok) throw new Error(`Jina failed for ${url}: HTTP ${res.status}`);
-  const text = await res.text();
-  // Jina returns "Title: ..." as first line
-  const titleMatch = text.match(/^Title:\s*(.+)/m);
+
+  if (!res.ok) throw new Error(`Jina HTTP ${res.status} for ${url}`);
+
+  const rawText = await res.text();
+  const titleMatch = rawText.match(/^Title:\s*(.+)/m);
   const title = titleMatch ? titleMatch[1].trim() : url;
-  return { text: text.slice(0, 8000), title };
+  const ogImage = parseJinaOgImage(rawText, url);
+
+  // Remove the Jina header block before returning content text
+  const contentStart = rawText.indexOf("Markdown Content:");
+  const text = contentStart > -1
+    ? rawText.slice(contentStart + 18).trim().slice(0, 8000)
+    : rawText.slice(0, 8000);
+
+  return { text, title, ogImage };
 }
 
-// ─── OpenRouter call ──────────────────────────────────────────────────────────
+// ─── OpenRouter ───────────────────────────────────────────────────────────────
 
-async function callOpenRouter(messages: any[], apiKey: string): Promise<string> {
-  const res = await fetch(OPENROUTER_API_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://github.com/paulfxyz/espresso",
-      "X-Title": "Espresso Morning Digest",
-    },
-    body: JSON.stringify({
-      model: "google/gemini-2.0-flash-001",
-      messages,
-      response_format: { type: "json_object" },
-      temperature: 0.4,
-    }),
+/**
+ * Make a structured JSON call to OpenRouter.
+ *
+ * Uses response_format: json_object to guarantee parseable JSON back.
+ * Includes a single retry on 429 (rate limit) or 5xx (transient error)
+ * with a 2-second backoff — added in v0.2.0 after observing occasional
+ * OpenRouter 503s during peak hours.
+ *
+ * @param messages - OpenAI-format messages array
+ * @param apiKey   - OpenRouter API key (sk-or-v1-...)
+ * @param model    - OpenRouter model slug (default: DEFAULT_MODEL)
+ */
+async function callOpenRouter(
+  messages: { role: string; content: string }[],
+  apiKey: string,
+  model = DEFAULT_MODEL
+): Promise<string> {
+  const body = JSON.stringify({
+    model,
+    messages,
+    response_format: { type: "json_object" },
+    temperature: 0.4,
+    max_tokens: 4096,
   });
+
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://github.com/paulfxyz/espresso",
+    "X-Title": "Espresso Morning Digest",
+  };
+
+  // Attempt 1
+  let res = await fetch(OPENROUTER_API_URL, { method: "POST", headers, body });
+
+  // Single retry on rate-limit or server error
+  if ((res.status === 429 || res.status >= 500) && res.status !== 401) {
+    console.warn(`⚠️  OpenRouter ${res.status} — retrying in 2s…`);
+    await new Promise((r) => setTimeout(r, 2000));
+    res = await fetch(OPENROUTER_API_URL, { method: "POST", headers, body });
+  }
+
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`OpenRouter error: ${res.status} — ${err}`);
   }
+
   const data = await res.json();
-  return data.choices[0].message.content;
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error("OpenRouter returned empty content");
+  return content;
 }
 
-// ─── Main pipeline ────────────────────────────────────────────────────────────
+// ─── Extraction Helpers ───────────────────────────────────────────────────────
 
-export async function runDailyPipeline(apiKey: string): Promise<{ digestId: number; storiesCount: number }> {
+/**
+ * Process a batch of links in parallel (up to EXTRACTION_BATCH_SIZE at once).
+ * Returns successfully extracted items; failed items get a stub text entry
+ * so they're not silently dropped from the AI's ranking pool.
+ */
+async function extractLinkBatch(
+  links: Link[]
+): Promise<Array<{ link: Link; text: string; title: string; ogImage: string | null }>> {
+  const results = await Promise.allSettled(
+    links.map(async (link) => {
+      // Use cached extraction if available
+      if (link.extractedText) {
+        return {
+          link,
+          text: link.extractedText,
+          title: link.title || link.url,
+          ogImage: link.ogImage || null,
+        };
+      }
+
+      try {
+        const { text, title, ogImage } = await extractViaJina(link.url);
+
+        // Cache back to DB (fire-and-forget — don't block pipeline on this)
+        const hash = sha256(text);
+        storage.updateLink(link.id, {
+          extractedText: text,
+          title,
+          ogImage: ogImage || undefined,
+          contentHash: hash,
+          sourceType: detectSourceType(link.url),
+        });
+
+        return { link, text, title, ogImage };
+      } catch (e) {
+        console.warn(`⚠️  Jina extraction failed [${link.url}]:`, (e as Error).message);
+        // Stub: title + URL still gives AI something to rank
+        return {
+          link,
+          text: `${link.title || link.url}. Unable to extract full content.`,
+          title: link.title || link.url,
+          ogImage: null,
+        };
+      }
+    })
+  );
+
+  return results
+    .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled")
+    .map((r) => r.value);
+}
+
+/**
+ * Run extraction in sequential chunks of EXTRACTION_BATCH_SIZE.
+ * Sequential chunks (not all-parallel) to avoid hammering Jina with 20
+ * simultaneous requests, which triggers rate limiting and timeout cascades.
+ */
+async function extractAllLinks(
+  links: Link[]
+): Promise<Array<{ link: Link; text: string; title: string; ogImage: string | null }>> {
+  const results: Array<{ link: Link; text: string; title: string; ogImage: string | null }> = [];
+
+  for (let i = 0; i < links.length; i += EXTRACTION_BATCH_SIZE) {
+    const chunk = links.slice(i, i + EXTRACTION_BATCH_SIZE);
+    const batch = await extractLinkBatch(chunk);
+    results.push(...batch);
+  }
+
+  return results;
+}
+
+// ─── Main Pipeline ────────────────────────────────────────────────────────────
+
+/**
+ * Run the daily digest generation pipeline.
+ *
+ * This is the main entry point called by the cron trigger and the
+ * POST /api/digest/generate endpoint.
+ *
+ * Idempotency: if a DRAFT digest already exists for today, it is overwritten.
+ * If a PUBLISHED digest exists for today, generation is blocked (explicit
+ * regeneration requires unpublishing first).
+ *
+ * @param apiKey - OpenRouter API key from DB config or env
+ * @returns { digestId, storiesCount } on success
+ */
+export async function runDailyPipeline(
+  apiKey: string
+): Promise<{ digestId: number; storiesCount: number }> {
   const today = getTodayDate();
 
-  // Check if digest already exists for today
+  // Block regeneration if today's digest is already published
   const existing = storage.getDigestByDate(today);
-  if (existing && existing.status === "published") {
-    throw new Error(`Published digest already exists for ${today}`);
+  if (existing?.status === "published") {
+    throw new Error(
+      `Published digest already exists for ${today}. Unpublish it first to regenerate.`
+    );
   }
 
-  // 1. Collect all unprocessed links + links from last 3 days (fresh pool)
-  const allLinks = storage.getUnprocessedLinks();
-  // ─── Trend fallback ────────────────────────────────────────────────────────
-  // If user has submitted fewer than 10 links, supplement with trending
-  // stories from trusted RSS sources (Reuters, BBC, Economist, FT, NYT, WSJ).
-  // User-submitted links always have priority — trends only fill the gap.
-  const MIN_LINKS_BEFORE_TRENDS = 10;
-  let trendItems: Array<{ url: string; title: string; source: string; text: string; ogImage: string | null }> = [];
+  // ── Step 1: Collect user links ───────────────────────────────────────────
 
-  if (allLinks.length < MIN_LINKS_BEFORE_TRENDS) {
-    const needed = MIN_LINKS_BEFORE_TRENDS - allLinks.length;
-    console.log(`📰 Only ${allLinks.length} user link(s) — fetching ${needed}+ trending stories to fill gaps…`);
+  const userLinks = storage.getUnprocessedLinks();
+  console.log(`🔗 ${userLinks.length} unprocessed user link(s) in pool`);
+
+  // ── Step 2: Trend fallback ───────────────────────────────────────────────
+
+  let trendLinks: Array<{
+    link: Link;
+    text: string;
+    title: string;
+    ogImage: string | null;
+  }> = [];
+
+  if (userLinks.length < MIN_LINKS_BEFORE_TRENDS) {
+    const needed = MIN_LINKS_BEFORE_TRENDS - userLinks.length;
+    console.log(`📰 Supplementing with trending stories (need ${needed}+ more)…`);
+
     try {
       const trends = await fetchTrendingStories(needed);
-      // Extract trend content in small sequential batches to avoid timeouts
-      for (const t of trends) {
-        try {
-          const extracted = await extractViaJina(t.url);
-          trendItems.push({
-            url: t.url,
-            title: extracted.title || t.title,
-            source: t.source,
-            text: extracted.text.slice(0, 2000),
-            ogImage: null,
-          });
-        } catch {
-          // Jina failed — use the RSS headline + description as text (still useful for AI ranking)
-          const stubText = `${t.title}. Source: ${t.source}. Published: ${new Date().toISOString().split('T')[0]}.`;
-          trendItems.push({ url: t.url, title: t.title, source: t.source, text: stubText, ogImage: null });
-        }
-        // Stop once we have enough trend items
-        if (trendItems.length >= 20) break;
-      }
+
+      // Convert trend stories to synthetic Link objects for uniform processing
+      const trendAsLinks: Link[] = trends.map((t) => ({
+        id: 0,
+        url: t.url,
+        title: t.title,
+        sourceType: "trend",
+        extractedText: null,
+        processedAt: null,
+        digestId: null,
+        ogImage: null,
+        notes: `Auto-fetched from ${t.source}`,
+        submittedAt: new Date().toISOString(),
+        contentHash: null,
+      }));
+
+      // Extract trend content with same batched approach as user links
+      trendLinks = await extractAllLinks(trendAsLinks);
+      console.log(`📰 ${trendLinks.length} trend items extracted`);
     } catch (e) {
-      console.warn("⚠️  Trend fetch failed:", e);
+      console.warn("⚠️  Trend supplementation failed:", (e as Error).message);
     }
   }
 
-  // If STILL no content at all, bail
-  if (allLinks.length === 0 && trendItems.length === 0) {
-    throw new Error("No links available and no trending stories could be fetched. Try again later.");
-  }
+  // ── Step 3: Extract user links ───────────────────────────────────────────
 
-  // 2. Extract content for each link (parallel, max 8 at a time)
-  const processed: Array<{ link: Link; text: string; title: string; ogImage: string | null }> = [];
+  const userProcessed = await extractAllLinks(userLinks);
+  console.log(`✅ ${userProcessed.length} user links extracted`);
 
-  const chunks: Link[][] = [];
-  for (let i = 0; i < allLinks.length; i += 8) chunks.push(allLinks.slice(i, i + 8));
+  // Merge: user links first (higher priority in AI prompt)
+  const allProcessed = [...userProcessed, ...trendLinks];
 
-  for (const chunk of chunks) {
-    const results = await Promise.allSettled(
-      chunk.map(async (link) => {
-        let text = link.extractedText;
-        let title = link.title || link.url;
-        let ogImage = link.ogImage;
-
-        if (!text) {
-          try {
-            const extracted = await extractViaJina(link.url);
-            text = extracted.text;
-            title = extracted.title || title;
-
-            // Also try to get OG image from raw HTML
-            if (!ogImage) {
-              try {
-                const rawHtml = await fetchRaw(link.url);
-                ogImage = extractOgImage(rawHtml, link.url);
-              } catch {}
-            }
-
-            // Cache extracted content in DB
-            const hash = sha256(text);
-            storage.updateLink(link.id, {
-              extractedText: text,
-              title,
-              ogImage: ogImage || undefined,
-              contentHash: hash,
-              sourceType: detectSourceType(link.url),
-            });
-          } catch (e) {
-            console.warn(`⚠️  Could not extract ${link.url}:`, e);
-            text = link.title || link.url;
-          }
-        }
-
-        return { link, text: text || "", title, ogImage: ogImage || null };
-      })
+  if (allProcessed.length === 0) {
+    throw new Error(
+      "No content available. Submit some links, or check server connectivity for RSS fallback."
     );
-
-    for (const r of results) {
-      if (r.status === "fulfilled") processed.push(r.value);
-    }
   }
 
-  // Note: allProcessed is assembled later after merging with trendItems
-  // This check is now redundant but kept as a guard for user links only
-  if (processed.length === 0 && trendItems.length === 0) throw new Error("No content available — Jina extraction failed for all links and no trend items available.");
+  // ── Step 4: Load 72h dedup history ──────────────────────────────────────
 
-  // 3. Load previously used story hashes to avoid 72h dedup
-  const recentDigests = storage.getAllDigests()
-    .filter(d => {
-      const dDate = new Date(d.date);
-      const threeDaysAgo = new Date();
-      threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-      return dDate > threeDaysAgo;
-    });
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 3);
 
   const recentStoryUrls = new Set<string>();
-  for (const d of recentDigests) {
+  for (const d of storage.getAllDigests()) {
+    if (new Date(d.date) <= cutoff) continue;
     try {
       const stories: DigestStory[] = JSON.parse(d.storiesJson);
-      stories.forEach(s => recentStoryUrls.add(s.sourceUrl));
+      stories.forEach((s) => recentStoryUrls.add(s.sourceUrl));
     } catch {}
   }
 
-  // ─── Merge user links + trend items ─────────────────────────────────────
-  // User links come first (priority), trend items fill the rest
-  const trendProcessed = trendItems.map(t => ({
-    link: {
-      id: 0,
-      url: t.url,
-      title: t.title,
-      sourceType: "trend",
-      extractedText: t.text,
-      processedAt: null,
-      digestId: null,
-      ogImage: t.ogImage,
-      notes: `Auto-fetched from ${t.source}`,
-      submittedAt: new Date().toISOString(),
-      contentHash: null,
-    } as Link,
-    text: t.text,
-    title: t.title,
-    ogImage: t.ogImage,
-  }));
+  console.log(`🔁 ${recentStoryUrls.size} URLs in 72h dedup pool`);
 
-  const allProcessed = [...processed, ...trendProcessed];
+  // ── Step 5: AI ranking + summarization ──────────────────────────────────
 
-  if (allProcessed.length === 0) {
-    throw new Error("No content available to generate a digest. Submit some links or check your network connection.");
-  }
-
-  // Build content payload for AI
   const contentItems = allProcessed.map((p, idx) => ({
     idx: idx + 1,
     url: p.link.url,
     title: p.title,
     sourceType: p.link.sourceType || "article",
     recentlyUsed: recentStoryUrls.has(p.link.url),
-    textPreview: p.text.slice(0, 2000),
-    isTrend: (p.link as any).sourceType === "trend",
-    trendSource: (p.link as any).notes || undefined,
+    textPreview: p.text.slice(0, MAX_TEXT_PER_ARTICLE),
+    isTrend: p.link.sourceType === "trend",
+    trendSource: p.link.notes || undefined,
   }));
 
-  // 4. Ask OpenRouter to rank + summarize top 10
-  const systemPrompt = `You are an expert editorial AI for "Espresso" — a curated morning news digest inspired by The Economist Espresso.
-Your task: from a list of articles/content, select the 10 most important, distinct, and newsworthy stories from the PAST FEW DAYS.
+  const systemPrompt = `You are the editorial AI for "Espresso" — a curated morning news digest inspired by The Economist Espresso. Your writing is intelligent, slightly opinionated, and respects the reader's time.
 
-Rules:
-- Prefer fresh content (not older than 3 days)
-- Strongly prefer user-submitted content (isTrend=false) over auto-fetched trend stories
-- Only use trend stories (isTrend=true) to fill slots when user content is insufficient or less newsworthy
-- Avoid stories marked as recentlyUsed=true unless critically important
-- No duplicate stories (same underlying news from different sources = pick the best one)
-- Each summary: maximum 200 words, written in a clear, intelligent, slightly opinionated editorial voice
-- Identify the most important category for each: Technology, Science, Business, Politics, World, Culture, Health, Environment, Sports, Other
-- Return valid JSON only, no markdown, no code fences`;
+Your task: from the provided list of articles, select exactly 10 that together form the best morning briefing. Prioritize newsworthiness, recency, diversity of topics, and global relevance.
 
-  const userPrompt = `Here are ${contentItems.length} articles to process. Select the 10 best, summarize each, and generate an inspiring closing quote.
+Editorial rules:
+- STRONGLY prefer user-submitted content (isTrend=false) over auto-fetched trends
+- Only use trend stories (isTrend=true) to fill slots if user content is genuinely insufficient
+- Avoid stories marked recentlyUsed=true unless they represent critical breaking developments
+- No duplicate stories — if two items cover the same event, pick the stronger one
+- Each summary: maximum 200 words, active voice, editorial confidence — no hedging
+- Cover diverse categories where possible (don't publish 8 World + 2 Business)
+- Return ONLY valid JSON matching the schema. No markdown fences, no extra keys.`;
+
+  const userPrompt = `Here are ${contentItems.length} articles. Select the 10 best and summarize them. Then add a closing quote.
 
 ARTICLES:
 ${JSON.stringify(contentItems, null, 2)}
 
-Return this exact JSON structure:
+Required JSON response:
 {
   "stories": [
     {
-      "idx": <original idx from above>,
-      "title": "<compelling headline, max 80 chars>",
-      "summary": "<editorial summary, max 200 words>",
-      "category": "<one of: Technology|Science|Business|Politics|World|Culture|Health|Environment|Sports|Other>"
+      "idx": <integer, original idx from above, 1-based>,
+      "title": "<headline, max 80 chars, strong and specific>",
+      "summary": "<editorial summary, max 200 words, active voice>",
+      "category": "<exactly one of: Technology|Science|Business|Politics|World|Culture|Health|Environment|Sports|Other>"
     }
   ],
-  "closingQuote": "<an inspiring, thought-provoking quote relevant to today's themes>",
-  "closingQuoteAuthor": "<Author Name, Context>"
+  "closingQuote": "<an inspiring or thought-provoking quote, thematically relevant to today's stories>",
+  "closingQuoteAuthor": "<Full Name, Role/Context>"
 }`;
 
-  const rawJson = await callOpenRouter([
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userPrompt },
-  ], apiKey);
+  console.log(`🤖 Calling OpenRouter (${DEFAULT_MODEL}) with ${contentItems.length} articles…`);
+
+  const rawJson = await callOpenRouter(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    apiKey
+  );
+
+  // ── Step 6: Parse and validate AI response ───────────────────────────────
 
   let aiResult: any;
   try {
     aiResult = JSON.parse(rawJson);
   } catch {
-    throw new Error("OpenRouter returned invalid JSON: " + rawJson.slice(0, 200));
+    throw new Error("OpenRouter returned invalid JSON: " + rawJson.slice(0, 300));
   }
 
   if (!aiResult.stories || !Array.isArray(aiResult.stories)) {
-    throw new Error("Unexpected AI response structure");
+    throw new Error("Unexpected AI response — missing stories array");
   }
 
-  // 5. Assemble digest stories
-  const stories: DigestStory[] = aiResult.stories.slice(0, 10).map((s: any) => {
-    const original = allProcessed[s.idx - 1];
-    return {
-      id: randomUUID(),
-      title: s.title || original?.title || "Untitled",
-      summary: s.summary || "",
-      imageUrl: original?.ogImage || `https://source.unsplash.com/800x450/?${encodeURIComponent(s.category || "news")}`,
-      sourceUrl: original?.link.url || "",
-      sourceTitle: original?.title || original?.link.url || "",
-      category: s.category || "Other",
-      linkId: original?.link.id || 0,
-    };
-  });
+  // ── Step 7: Assemble stories with images ─────────────────────────────────
 
-  // 6. Persist digest
+  const stories: DigestStory[] = aiResult.stories
+    .slice(0, 10)
+    .map((s: any): DigestStory | null => {
+      // Guard against AI returning out-of-bounds idx
+      const original = allProcessed[s.idx - 1];
+      if (!original) {
+        console.warn(`⚠️  AI returned idx ${s.idx} but only ${allProcessed.length} items exist`);
+        return null;
+      }
+
+      // Image priority: Jina-extracted og:image → picsum fallback (seeded by URL)
+      const imageUrl = original.ogImage || fallbackImage(original.link.url);
+
+      return {
+        id: randomUUID(),
+        title: s.title || original.title || "Untitled",
+        summary: s.summary || "",
+        imageUrl,
+        sourceUrl: original.link.url,
+        sourceTitle: original.title || original.link.url,
+        category: s.category || "Other",
+        linkId: original.link.id,
+      };
+    })
+    .filter((s): s is DigestStory => s !== null);
+
+  if (stories.length === 0) {
+    throw new Error("AI returned 0 valid stories — check the OpenRouter response format");
+  }
+
+  // ── Step 8: Persist digest ───────────────────────────────────────────────
+
   const digestData = {
     date: today,
     status: "draft" as const,
@@ -342,16 +523,13 @@ Return this exact JSON structure:
     publishedAt: null,
   };
 
-  let digest;
-  if (existing) {
-    digest = storage.updateDigest(existing.id, digestData);
-  } else {
-    digest = storage.createDigest(digestData);
-  }
+  const digest = existing
+    ? storage.updateDigest(existing.id, digestData)
+    : storage.createDigest(digestData);
 
-  // 7. Mark links as processed
+  // Mark user links as processed (trend links have id=0, skip them)
   for (const story of stories) {
-    if (story.linkId) {
+    if (story.linkId > 0) {
       storage.updateLink(story.linkId, {
         processedAt: new Date().toISOString(),
         digestId: digest!.id,
@@ -359,10 +537,27 @@ Return this exact JSON structure:
     }
   }
 
+  console.log(`✅ Digest #${digest!.id} generated: ${stories.length} stories`);
   return { digestId: digest!.id, storiesCount: stories.length };
 }
 
-// Swap one story for another from the available pool
+// ─── Story Swap ───────────────────────────────────────────────────────────────
+
+/**
+ * Swap one story in an existing digest for another from the unused link pool.
+ *
+ * Admin workflow: the editor clicks "Swap" on a story they don't like.
+ * We find the next unused link in the DB, extract + summarize it via AI,
+ * and replace the target story in the digest JSON.
+ *
+ * v0.2.0 fix: capture oldLinkId BEFORE mutating stories[], not after.
+ * The previous version captured `oldStory` after the array mutation, so it
+ * was reading the new story's linkId instead of the old one.
+ *
+ * @param digestId - ID of the digest containing the story to swap
+ * @param storyId  - UUID of the specific DigestStory to replace
+ * @param apiKey   - OpenRouter API key
+ */
 export async function swapStory(
   digestId: number,
   storyId: string,
@@ -372,34 +567,47 @@ export async function swapStory(
   if (!digest) throw new Error("Digest not found");
 
   const stories: DigestStory[] = JSON.parse(digest.storiesJson);
-  const storyIdx = stories.findIndex(s => s.id === storyId);
+  const storyIdx = stories.findIndex((s) => s.id === storyId);
   if (storyIdx === -1) throw new Error("Story not found in digest");
 
-  // Find unused links
-  const usedLinkIds = new Set(stories.map(s => s.linkId));
-  const unusedLinks = storage.getAllLinks().filter(l => !usedLinkIds.has(l.id) && l.extractedText);
+  // Capture old linkId BEFORE mutation (v0.2.0 bug fix)
+  const oldLinkId = stories[storyIdx].linkId;
 
-  if (unusedLinks.length === 0) throw new Error("No more unused links available to swap");
+  // Find next unused user link (with extracted content for speed)
+  const usedLinkIds = new Set(stories.map((s) => s.linkId));
+  const candidates = storage
+    .getAllLinks()
+    .filter((l) => !usedLinkIds.has(l.id) && l.extractedText);
 
-  // Pick the one not already in digest
-  const candidate = unusedLinks[0];
+  if (candidates.length === 0) {
+    throw new Error("No more unused links available to swap. Submit more links first.");
+  }
 
-  const systemPrompt = `You are an editorial AI for "Espresso" morning digest. Summarize the following article in a compelling way.`;
-  const userPrompt = `Article title: ${candidate.title}
+  const candidate = candidates[0];
+
+  const rawJson = await callOpenRouter(
+    [
+      {
+        role: "system",
+        content: `You are the editorial AI for "Espresso" morning digest. Summarize the provided article with intelligence and editorial confidence.`,
+      },
+      {
+        role: "user",
+        content: `Article:
+Title: ${candidate.title}
 URL: ${candidate.url}
-Content: ${(candidate.extractedText || "").slice(0, 3000)}
+Content: ${(candidate.extractedText || "").slice(0, MAX_TEXT_PER_ARTICLE)}
 
 Return JSON:
 {
-  "title": "<compelling headline max 80 chars>",
+  "title": "<headline max 80 chars>",
   "summary": "<editorial summary max 200 words>",
   "category": "<Technology|Science|Business|Politics|World|Culture|Health|Environment|Sports|Other>"
-}`;
-
-  const rawJson = await callOpenRouter([
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userPrompt },
-  ], apiKey);
+}`,
+      },
+    ],
+    apiKey
+  );
 
   const aiResult = JSON.parse(rawJson);
 
@@ -407,23 +615,28 @@ Return JSON:
     id: randomUUID(),
     title: aiResult.title || candidate.title || "Untitled",
     summary: aiResult.summary || "",
-    imageUrl: candidate.ogImage || `https://source.unsplash.com/800x450/?${encodeURIComponent(aiResult.category || "news")}`,
+    imageUrl: candidate.ogImage || fallbackImage(candidate.url),
     sourceUrl: candidate.url,
     sourceTitle: candidate.title || candidate.url,
     category: aiResult.category || "Other",
     linkId: candidate.id,
   };
 
-  // Replace in stories array
+  // Replace story in array and persist
   stories[storyIdx] = newStory;
   storage.updateDigest(digestId, { storiesJson: JSON.stringify(stories) });
 
-  // Mark old link as unprocessed, new link as processed
-  const oldStory = stories[storyIdx];
+  // Mark new link as processed; old link becomes unprocessed again
   storage.updateLink(candidate.id, {
     processedAt: new Date().toISOString(),
     digestId,
   });
 
+  // Free the old link back to the unprocessed pool
+  if (oldLinkId > 0) {
+    storage.updateLink(oldLinkId, { processedAt: null, digestId: null });
+  }
+
+  console.log(`🔄 Swapped story in digest #${digestId}: "${newStory.title}"`);
   return newStory;
 }

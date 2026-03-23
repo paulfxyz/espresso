@@ -77,7 +77,7 @@ const MAX_TEXT_PER_ARTICLE = 3000;
 /** OpenRouter model. Gemini 2.5 Pro: superior instruction following for complex
  *  diversity rules and structured JSON output. Best quality/cost for this task.
  *  Change this to any OpenRouter model slug: https://openrouter.ai/models */
-const DEFAULT_MODEL = "google/gemini-2.5-pro-preview-03-25";
+const DEFAULT_MODEL = "google/gemini-2.5-pro";
 
 // ─── Utility Functions ────────────────────────────────────────────────────────
 

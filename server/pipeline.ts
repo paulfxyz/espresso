@@ -645,10 +645,13 @@ function enrichStorySources(
   }
 
   for (const story of stories) {
-    if ((story.sources?.length ?? 0) >= 3) continue; // Already has enough
+    if ((story.sources?.length ?? 0) >= 4) continue; // Already has enough
 
     const storyKw = keywords(story.title + " " + story.summary);
-    const needed = 3 - (story.sources?.length ?? 0);
+    // Target 4 sources. The AI will have assigned 1-3 via additionalIdxs.
+    // We pad to 4. Keyword-matched sources are more relevant than random ones,
+    // so we score all candidates and pick the best available.
+    const needed = 4 - (story.sources?.length ?? 0);
 
     // Score all articles NOT already used as a source for this story
     const storySourceUrls = new Set((story.sources ?? []).map(s => s.url));
@@ -900,9 +903,10 @@ MANDATORY SLOTS — your 20 stories MUST include ALL of the following:
 BEFORE FINALISING: count your stories per category and region. If you're short on a mandatory slot, REMOVE a story from an over-represented area and replace it.
 
 QUALITY:
-- Each summary: 150-200 words, split into EXACTLY 2 or 3 short paragraphs separated by a blank line (\n\n).
-  Structure: P1 = what happened (the core facts). P2 = why it matters / context. P3 (optional) = what comes next / implications.
-  Active voice, editorial confidence — no hedging. Each paragraph should be 2-4 sentences.
+- Each summary: EXACTLY 2 paragraphs separated by a blank line (\n\n). Each paragraph: 50-70 words.
+  P1 = What happened — the core facts, who, what, where, when. 2-3 sentences.
+  P2 = Why it matters — context, significance, implications, what to watch. 2-3 sentences.
+  Active voice. Editorial confidence. No hedging. No "experts say". Total: 100-140 words.
 - Headlines: specific and informative, not clickbait
 - ALL OUTPUT TEXT MUST BE IN ${edition.languageName.toUpperCase()} — this is the ${edition.name} edition
 - Imagine a reader who wants to feel informed about the whole world over breakfast — not exhausted by one topic
@@ -921,7 +925,7 @@ Required JSON response:
       "idx": <primary source idx from above, 1-based>,
       "additionalIdxs": [<up to 2 more idx values that also covered this story — for multi-source coverage>],
       "title": "<headline, max 80 chars, strong and specific>",
-      "summary": "<2-3 paragraphs separated by \\n\\n. P1: what happened. P2: why it matters. P3 (optional): what comes next. 150-200 words total, active voice>",
+      "summary": "<EXACTLY 2 paragraphs separated by \\n\\n. P1: what happened (50-70 words). P2: why it matters (50-70 words). Active voice, no hedging.>",
       "category": "<exactly one of: Technology|Science|Business|Politics|World|Culture|Health|Environment|Sports|Other>"
     }
   ],
@@ -1018,10 +1022,10 @@ IMPORTANT: For additionalIdxs — if multiple articles in the list cover the SAM
   // The AI only assigns additionalIdxs when it recognises multiple articles
   // covering the same event. Most stories get sources=1. This step finds
   // best-matching articles from the full pool to pad every story to 3 sources.
-  const sourcesBefore = stories.filter(s => (s.sources?.length ?? 0) >= 3).length;
+  const sourcesBefore = stories.filter(s => (s.sources?.length ?? 0) >= 4).length;
   enrichStorySources(stories, allProcessed);
-  const sourcesAfter = stories.filter(s => (s.sources?.length ?? 0) >= 3).length;
-  console.log(`📚 Sources: ${sourcesBefore} stories had 3+ before enrichment, ${sourcesAfter} after`);
+  const sourcesAfter = stories.filter(s => (s.sources?.length ?? 0) >= 4).length;
+  console.log(`📚 Sources: ${sourcesBefore} stories had 4+ before enrichment → ${sourcesAfter}/20 after`);
 
   // ── Step 7b: Generate images for stories with missing/invalid OG images ──
   // Run in parallel (max 4 at once) — non-blocking on failure
@@ -1157,7 +1161,7 @@ Content: ${(candidate.extractedText || "").slice(0, MAX_TEXT_PER_ARTICLE)}
 Return JSON:
 {
   "title": "<headline max 80 chars>",
-  "summary": "<2-3 paragraphs separated by \\n\\n. 150-200 words total, active voice>",
+  "summary": "<EXACTLY 2 paragraphs separated by \\n\\n. P1: what happened (50-70 words). P2: why it matters (50-70 words).>",
   "category": "<Technology|Science|Business|Politics|World|Culture|Health|Environment|Sports|Other>"
 }`,
       },

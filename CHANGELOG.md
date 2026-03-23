@@ -1,3 +1,23 @@
+## [2.1.4] — 2026-03-23
+
+**2 paragraphs, 50-70 words each. 4+ sources per story. All 8 editions regenerated.**
+
+Summary format tightened:
+- EXACTLY 2 paragraphs (not 2-3)
+- Each paragraph 50-70 words (not 150-200 total)
+- P1: what happened — facts, who, what, where
+- P2: why it matters — context, significance, implications
+- Total: 100-140 words, clean and readable
+
+Source minimum raised from 3 → 4.
+enrichStorySources() now pads to 4 sources using Jaccard keyword matching.
+AI's additionalIdxs may already supply 2-5; enrichment tops up to 4 minimum.
+
+All 8 editions (en-WORLD, en-US, en-CA, en-GB, fr-FR, fr-CA, de-DE, en-AU)
+regenerated with the new format and published.
+
+---
+
 ## [2.1.3] — 2026-03-23
 
 **Story summaries now rendered as 2-3 paragraphs with clear spacing.**

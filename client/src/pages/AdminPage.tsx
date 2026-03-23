@@ -27,6 +27,8 @@ import {
 import { useTheme } from "@/components/ThemeProvider";
 import { useAdminAuth } from "@/components/AdminAuth";
 import type { DigestStory, Link } from "@shared/schema";
+import { EDITIONS, getEdition } from "@shared/editions";
+import type { Edition } from "@shared/editions";
 
 interface DigestResponse {
   id: number;
@@ -133,14 +135,16 @@ function OverviewTab({ headers }: { headers: Record<string, string> }) {
     queryFn: async () => { const r = await apiRequest("GET", "/api/digests", undefined, headers); return r.ok ? r.json() : []; },
   });
 
+  const [selectedEdition, setSelectedEdition] = useState<Edition>(EDITIONS[0]);
+
   const generateMutation = useMutation({
     mutationFn: async () => {
-      const r = await apiRequest("POST", "/api/digest/generate", {}, headers);
+      const r = await apiRequest("POST", "/api/digest/generate", { edition: selectedEdition.id }, headers);
       if (!r.ok) throw new Error((await r.json()).error);
       return r.json();
     },
     onSuccess: (data) => {
-      toast({ title: `Digest generated — ${data.storiesCount} stories ready` });
+      toast({ title: `${selectedEdition.flag} Digest generated — ${data.storiesCount} stories ready (${selectedEdition.name})` });
       qc.invalidateQueries({ queryKey: ["/api/digests"] });
     },
     onError: (e: any) => toast({ title: "Generation failed", description: e.message, variant: "destructive" }),
@@ -161,6 +165,31 @@ function OverviewTab({ headers }: { headers: Record<string, string> }) {
       {/* Quick actions */}
       <div className="border border-border bg-card p-6">
         <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground font-ui mb-4">Quick Actions</h2>
+
+        {/* Edition selector for generation */}
+        <div className="mb-4">
+          <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground font-ui mb-2">Edition to generate</p>
+          <div className="flex flex-wrap gap-2">
+            {EDITIONS.map(ed => (
+              <button
+                key={ed.id}
+                onClick={() => setSelectedEdition(ed)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border transition-colors font-ui ${
+                  selectedEdition.id === ed.id
+                    ? "bg-[#E3120B] text-white border-[#E3120B]"
+                    : "border-border hover:border-[#E3120B] hover:text-[#E3120B]"
+                }`}
+              >
+                <span>{ed.flag}</span>
+                <span className="hidden sm:inline">{ed.name}</span>
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted-foreground font-ui mt-1.5">
+            Will generate in <strong>{selectedEdition.languageName}</strong> using {selectedEdition.name} sources
+          </p>
+        </div>
+
         <div className="flex flex-wrap gap-3">
           <button
             onClick={() => generateMutation.mutate()}
@@ -169,7 +198,7 @@ function OverviewTab({ headers }: { headers: Record<string, string> }) {
             className="flex items-center gap-2 px-5 py-2.5 bg-[#E3120B] text-white text-sm font-bold hover:bg-[#B50D08] transition-colors disabled:opacity-40 font-ui"
           >
             {generateMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-            Generate Today's Digest
+            {selectedEdition.flag} Generate — {selectedEdition.name}
           </button>
           <a href="/#/" className="flex items-center gap-2 px-5 py-2.5 border border-border text-sm font-ui hover:bg-accent transition-colors">
             <Eye size={13} /> View Digest

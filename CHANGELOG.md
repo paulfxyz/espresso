@@ -5,7 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
-## [Unreleased] — Roadmap for v2.0.0
+## [Unreleased] — Roadmap for v2.1.0+
 
 - 📧 Email delivery — formatted HTML digest at 6 AM (Postmark / Resend / SMTP)
 - 📱 Telegram bot — `/add <url>` to submit links, `/digest` to read
@@ -15,6 +15,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 - 🌐 Browser extension — one-click save
 - 🛡️ Rate limiting — API protection for public deployments
 - 👥 Multi-user — teams and shared digests
+
+---
+
+## [2.0.0] — 2026-03-23
+
+**The Edition System: 8 independent editions in English, French, and German.**
+
+### Engineering notes
+
+**The core design challenge: what IS an “edition”?**
+The naive approach would be a UI translation layer — same digest, different language skin. We rejected this because it produces a French “edition” that’s just an Anglo-Saxon digest in translation. Real editions require: (1) language-native RSS sources, (2) AI instructed to write in the target language, (3) regional editorial priorities, (4) independent digest storage.
+
+**Why BCP 47 locale tags (en-WORLD, fr-FR, de-DE) as edition IDs:**
+Canada has two editions (English and French). ISO country codes alone can’t differentiate them. BCP 47 (language-REGION) is the correct namespace — it’s the W3C/IETF standard for exactly this. It also maps directly to browser navigator.language for future auto-detection.
+
+**The DB migration challenge:**
+The digests table previously used (date) as the unique key — one digest per day. v2.0.0 needed (date, edition) as the composite key. SQLite ALTER TABLE doesn’t support adding constraints, only ADD COLUMN. Solution: add the edition column with DEFAULT ‘en-WORLD’, then use raw SQL for the multi-column WHERE queries instead of Drizzle’s typed WHERE (which has limited AND() ergonomics for this pattern).
+
+**French RSS: the reliability problem:**
+French newspaper RSS feeds are significantly less standardised than English. Le Figaro changed RSS URLs in 2022. Libération’s RSS has been intermittent. Strategy: anchor on RFI (Radio France Internationale) and France 24 as primary feeds — both are publicly-funded international broadcasters with professionally maintained RSS. Complement with Le Monde (stable), Les Échos (business), L’Équipe (sport). For French-Canada: Radio-Canada, Le Devoir, La Presse.
+
+**German RSS: the format variety:**
+FAZ uses Atom format (atomStyle: true required). Süddeutsche changed URL structure in 2023. Deutsche Welle is the anchor — multiple topical sub-feeds, internationally maintained. Spiegel DE has separate RSS for politics, business, general — we pull all three. Kicker for Bundesliga is essential (football is mandatory for German edition).
+
+**The AI language instruction challenge:**
+Initial tests showed the AI mixing languages (French summaries with English headlines). Fix: language instruction placed BEFORE the diversity rules in the system prompt, in both English and the target language (“Write in French / Écrivez en français”). The dual-language instruction significantly improved compliance. Also: category names provided in translated form so the AI outputs “Politique” not “Politics” for the French edition.
+
+**The landing page i18n approach:**
+Full page translation in vanilla JS with data-lang attributes — no framework. Three language objects (EN, FR, DE) stored in JS. On language switch: iterate all [data-lang-key] elements and replace textContent. Flag switcher in nav persists to localStorage. Clean, zero-dependency, instant switching.
+
+### ✨ Added
+
+- **8 editions:** en-WORLD, en-US, en-CA, en-GB, fr-FR, fr-CA, de-DE, en-AU
+- **`shared/editions.ts`** — edition registry with language instructions, regional focus, category translations
+- **Edition-specific RSS sources** — French: RFI, France 24, Le Monde, Le Figaro, L’Équipe, Les Échos, Radio-Canada, Le Devoir; German: DW, Der Spiegel, Süddeutsche, FAZ, Zeit, Handelsblatt, Kicker
+- **Flag selector in reader header** — dropdown with language grouping, persisted in localStorage
+- **Edition selector in admin panel** — 8 flag buttons, generates digest for selected edition
+- **`GET /api/digest/latest?edition=fr-FR`** — edition query param
+- **`POST /api/digest/generate` body `{ edition }`** — generates specific edition
+- **DB migration** — `digests.edition` column added, existing rows default to `en-WORLD`
+- **Landing page** — full FR + DE translations, flag switcher, 8 editions showcase section, v2.0.0
+- **Version:** 2.0.0
 
 ---
 

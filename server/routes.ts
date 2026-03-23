@@ -100,7 +100,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
    * Public. Used by uptime monitors, Docker HEALTHCHECK, GitHub Actions.
    */
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", version: "1.6.2" });
+    res.json({ status: "ok", version: "2.0.0" });
   });
 
   // ── Setup ──────────────────────────────────────────────────────────────────
@@ -209,13 +209,15 @@ export function registerRoutes(httpServer: Server, app: Express) {
   // ── Digest — Read (Public) ─────────────────────────────────────────────────
 
   /**
-   * GET /api/digest/latest
-   * Public. Returns the latest published digest with stories parsed from JSON.
-   * This is the endpoint the reader frontend hits on every load.
+   * GET /api/digest/latest?edition=en-WORLD
+   * Public. Returns the latest published digest for the given edition.
+   * v2.0.0: edition query param added. Defaults to "en-WORLD" for backwards compat.
+   * The reader frontend passes its currently selected edition on every load.
    */
-  app.get("/api/digest/latest", (_req, res) => {
-    const digest = storage.getLatestPublishedDigest();
-    if (!digest) return res.status(404).json({ error: "No published digest yet" });
+  app.get("/api/digest/latest", (req, res) => {
+    const edition = (req.query.edition as string) || "en-WORLD";
+    const digest = storage.getLatestPublishedDigest(edition);
+    if (!digest) return res.status(404).json({ error: `No published digest for edition: ${edition}` });
     res.json({ ...digest, stories: JSON.parse(digest.storiesJson) });
   });
 
@@ -248,13 +250,15 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   /**
    * POST /api/digest/generate
-   * Admin. Triggers the full daily pipeline.
+   * Admin. Triggers the full daily pipeline for a specific edition.
    *
-   * This is a synchronous long-poll — it holds the connection until generation
-   * completes (typically 15-90 seconds depending on number of links and Jina
-   * extraction speed). Returns { success, digestId, storiesCount } on success.
+   * v2.0.0: Body can include { edition: "fr-FR" } to generate a specific edition.
+   * Defaults to "en-WORLD" for backwards compatibility.
    *
-   * Note: if today's digest is already published, returns 409 Conflict.
+   * This is a synchronous long-poll — holds connection until generation
+   * completes (15-90 seconds). Returns { success, digestId, storiesCount, edition }.
+   *
+   * Note: if today's digest for this edition is already published, returns 409 Conflict.
    */
   app.post("/api/digest/generate", requireApiKey, async (req, res) => {
     const apiKey = storage.getConfig("openrouter_key");
@@ -264,8 +268,10 @@ export function registerRoutes(httpServer: Server, app: Express) {
       });
     }
 
+    const edition = (req.body?.edition as string) || "en-WORLD";
+
     try {
-      const result = await runDailyPipeline(apiKey);
+      const result = await runDailyPipeline(apiKey, edition);
       res.json({ success: true, ...result });
     } catch (e: any) {
       const statusCode = e.message?.includes("already exists") ? 409 : 500;

@@ -1,7 +1,7 @@
 /**
  * @file shared/schema.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 0.2.0
+ * @version 2.0.0
  *
  * Cup of News — Shared Data Schema
  *
@@ -125,6 +125,15 @@ export const digests = sqliteTable("digests", {
 
   /** ISO timestamp of when the admin published — null for drafts */
   publishedAt: text("published_at"),
+
+  /**
+   * Edition identifier — BCP 47 locale tag (e.g. "en-WORLD", "fr-FR", "de-DE").
+   * Added in v2.0.0. The unique constraint shifts from (date) to (date, edition)
+   * allowing up to 8 independent digests per day — one per edition.
+   *
+   * Migration: existing rows default to "en-WORLD" (applied in storage.ts AUTO-MIGRATE).
+   */
+  edition: text("edition").notNull().default("en-WORLD"),
 });
 
 export const insertDigestSchema = createInsertSchema(digests).omit({ id: true });

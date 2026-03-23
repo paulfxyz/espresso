@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.6.2-red?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-2.0.0-red?style=for-the-badge)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
 ![Node.js](https://img.shields.io/badge/Node.js-20+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
@@ -39,7 +39,8 @@ This project was designed and built entirely in collaboration with **[Perplexity
 |---------|---------|
 | **20 curated stories** | AI selects the 20 most important, distinct stories |
 | **Editorial prompt** | Tell the AI who you are — shapes every digest to your interests |
-| **34 RSS fallback sources** | Reuters, BBC, FT, Economist, NYT, Guardian, Wired, Nature, ESPN, Japan Times + more |
+| **8 World Editions** | en-WORLD, en-US, en-CA, en-GB, fr-FR, fr-CA, de-DE, en-AU — each generates independently |
+| **34+ RSS sources per edition** | Reuters, BBC, FT, Economist, NYT, Guardian, Wired, Nature, ESPN, Japan Times, RFI, DW, Le Monde, Der Spiegel + more |
 | **Mandatory diversity** | Always includes Sport, Culture, Science/Health; covers Africa, Asia, Americas, Europe |
 | **Per-story source modal** | "Read sources" on each card shows original article + direct link |
 | **Smart OG images** | 2-pass extraction (Jina → direct HTML fetch); editorial SVG fallback per category |
@@ -50,7 +51,7 @@ This project was designed and built entirely in collaboration with **[Perplexity
 | **PWA-ready** | Installable from browser on iOS/Android |
 | **Capacitor-ready** | Native iOS/Android app with one command (`npx cap sync`) |
 | **Economist design** | Red/black/white, Cabinet Grotesk + Libre Baskerville |
-| **One paid service** | OpenRouter only — ~$0.02/digest at Gemini Flash rates |
+| **One paid service** | OpenRouter only — ~$0.15/digest at Gemini 2.5 Pro rates |
 
 ---
 
@@ -67,7 +68,7 @@ You submit links all week (API, admin panel, Safari Share Sheet)
     └───────────┬──────────────────────────────────────────┘
                 │
     ┌───────────▼──────────┐    ┌────────────────────────────┐
-    │  User links (≥20)    │    │  34 RSS fallback sources    │
+    │  User links (≥20)    │    │  34+ RSS sources per edition│
     │  Always priority     │    │  when pool is thin          │
     └───────────┬──────────┘    └───────────┬────────────────┘
                 └─────────────┬─────────────┘
@@ -322,24 +323,26 @@ fly deploy
 
 ```
 cup-of-news/
+├── shared/
+│   ├── schema.ts              # Drizzle schema + TypeScript types (shared FE/BE)
+│   └── editions.ts            # Edition registry: BCP 47 IDs, language instructions, categories
 ├── server/
 │   ├── index.ts          # Express entry point
-│   ├── routes.ts         # All API endpoints (~400 lines, intentionally thin)
-│   ├── pipeline.ts       # Daily digest generation engine (~650 lines)
-│   ├── trends.ts         # 34 RSS sources — fallback content engine
-│   └── storage.ts        # SQLite via Drizzle ORM (IStorage interface)
+│   ├── routes.ts         # All API endpoints — edition query/body param on generate + latest
+│   ├── pipeline.ts       # Daily digest generation engine — edition param, native language prompts
+│   ├── trends.ts         # 34+ RSS sources per edition — 8 edition-specific source sets
+│   └── storage.ts        # SQLite via Drizzle ORM (IStorage interface) — edition-aware queries
 ├── client/src/
 │   ├── App.tsx            # Router + providers
 │   ├── pages/
-│   │   ├── DigestView.tsx     # Public reader (swipeable cards + sources modal)
-│   │   ├── AdminPage.tsx      # Admin panel (Overview, Links, Digest, Editorial tabs)
+│   │   ├── DigestView.tsx     # Public reader — edition-aware API calls, flag selector
+│   │   ├── AdminPage.tsx      # Admin panel — 8-edition flag selector for digest generation
 │   │   └── SetupPage.tsx      # First-run configuration wizard
 │   ├── components/
 │   │   ├── AdminAuth.tsx       # Login gate + change password modal
+│   │   ├── EditionSelector.tsx # Flag dropdown, localStorage persistence
 │   │   └── ThemeProvider.tsx   # Dark/light mode context
 │   └── index.css               # Economist design system tokens
-├── shared/
-│   └── schema.ts              # Drizzle schema + TypeScript types (shared FE/BE)
 ├── .github/workflows/
 │   └── daily-digest.yml       # Cron — 6:00 AM GMT
 ├── fly.toml                    # Fly.io deployment config
@@ -376,7 +379,8 @@ Full history with engineering narrative: **[CHANGELOG.md](./CHANGELOG.md)**
 
 | Version | Date | Summary |
 |---------|------|---------|
-| **1.6.2** | 2026-03-23 | Critical fix: missing Rss import (blank page), auto_stop off
+| **2.0.0** | 2026-03-23 | 8 editions (EN/FR/DE), flag selector, native language generation per edition |
+| 1.6.2 | 2026-03-23 | Critical fix: missing Rss import (blank page), auto_stop off
 | 1.6.1 | 2026-03-23 | Docs patch: version sync, model references updated to Gemini 2.5 Pro |
 | 1.6.0 | 2026-03-23 | Gemini 2.5 Pro, multi-source attribution, diversity v4, RSS header removed |
 | 1.5.1 | 2026-03-23 | Direct HTML OG image fallback, 34 RSS sources, 17/20 real photos |
@@ -391,8 +395,11 @@ Full history with engineering narrative: **[CHANGELOG.md](./CHANGELOG.md)**
 
 ---
 
-## 🗺️ Roadmap — v2.0.0
+## 🗺️ Roadmap — v2.1.0+
 
+**v2.0.0 shipped.** The Edition System is live — 8 independent editions in EN/FR/DE.
+
+Next:
 - 📧 Email delivery (Postmark / Resend) — digest in your inbox at 6 AM
 - 📱 Telegram bot — `/add <url>` and `/digest` commands
 - 🔔 Push notifications via Capacitor — native 6 AM alert

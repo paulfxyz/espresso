@@ -47,6 +47,7 @@ import { storage } from "./storage";
 import type { DigestStory, Link } from "@shared/schema";
 import { createHash, randomUUID } from "crypto";
 import { fetchTrendingStories } from "./trends";
+import { getEdition, DEFAULT_EDITION } from "@shared/editions";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -719,6 +720,7 @@ IMPORTANT: For additionalIdxs — if multiple articles in the list cover the SAM
     closingQuoteAuthor: aiResult.closingQuoteAuthor || "",
     generatedAt: new Date().toISOString(),
     publishedAt: null,
+    edition: editionId,
   };
 
   const digest = existing
@@ -735,8 +737,8 @@ IMPORTANT: For additionalIdxs — if multiple articles in the list cover the SAM
     }
   }
 
-  console.log(`✅ Digest #${digest!.id} generated: ${stories.length} stories`);
-  return { digestId: digest!.id, storiesCount: stories.length };
+  console.log(`✅ Digest #${digest!.id} generated: ${stories.length} stories [«${editionId}»]`);
+  return { digestId: digest!.id, storiesCount: stories.length, edition: editionId };
 }
 
 // ─── Story Swap ───────────────────────────────────────────────────────────────

@@ -313,6 +313,29 @@ Manual trigger: **Actions → Daily Morning Digest → Run workflow**
 
 ---
 
+## Multi-Edition Generation
+
+Generate a specific edition via API:
+```bash
+# French edition
+curl -X POST https://app.cupof.news/api/digest/generate \
+  -H "x-admin-key: your-password" \
+  -H "Content-Type: application/json" \
+  -d '{"edition": "fr-FR"}'
+
+# German edition
+curl -X POST https://app.cupof.news/api/digest/generate \
+  -H "x-admin-key: your-password" \
+  -H "Content-Type: application/json" \
+  -d '{"edition": "de-DE"}'
+```
+
+Available edition IDs: `en-WORLD`, `en-US`, `en-CA`, `en-GB`, `fr-FR`, `fr-CA`, `de-DE`, `en-AU`
+
+Each edition maintains its own digest per day. The reader automatically fetches the correct edition based on your last selection (saved in the browser).
+
+---
+
 ## Native iOS / Android App
 
 Cup of News is PWA-ready and Capacitor-ready. Two paths to native:

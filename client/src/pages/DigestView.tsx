@@ -30,6 +30,7 @@ import {
   Sun, Moon, ArrowUpRight, ChevronLeft, ChevronRight, LayoutGrid, X, Rss
 } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
+import { EditionSelector, useEdition } from "@/components/EditionSelector";
 import type { DigestStory } from "@shared/schema";
 
 interface DigestResponse {
@@ -53,11 +54,20 @@ export default function DigestView() {
   const { theme, toggle } = useTheme();
   const [cardIndex, setCardIndex] = useState(0);
   const [showGrid, setShowGrid] = useState(false);
+  const { edition, setEdition } = useEdition();
+
+  // When the edition changes, reset to first card
+  const handleEditionChange = (e: typeof edition) => {
+    setEdition(e);
+    setCardIndex(0);
+    setShowGrid(false);
+  };
 
   const { data: digest, isLoading } = useQuery<DigestResponse | null>({
-    queryKey: ["/api/digest/latest"],
+    // Include edition in the query key so React Query re-fetches when edition changes
+    queryKey: ["/api/digest/latest", edition.id],
     queryFn: async () => {
-      const r = await apiRequest("GET", "/api/digest/latest");
+      const r = await apiRequest("GET", `/api/digest/latest?edition=${encodeURIComponent(edition.id)}`);
       if (!r.ok) return null;
       return r.json();
     },
@@ -165,6 +175,9 @@ export default function DigestView() {
 
           {/* Controls */}
           <div className="flex items-center gap-1 flex-shrink-0">
+            {/* Edition selector — flag dropdown */}
+            <EditionSelector current={edition} onChange={handleEditionChange} />
+
             <button
               onClick={() => setShowGrid(v => !v)}
               className="w-9 h-9 flex items-center justify-center hover:bg-accent rounded transition-colors"
@@ -180,7 +193,6 @@ export default function DigestView() {
             >
               {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
             </button>
-
           </div>
         </div>
       </header>

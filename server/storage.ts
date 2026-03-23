@@ -1,7 +1,7 @@
 /**
  * @file server/storage.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 0.2.0
+ * @version 2.0.0
  *
  * Cup of News — SQLite Storage Layer
  *
@@ -107,6 +107,16 @@ sqlite.exec(`
   CREATE INDEX IF NOT EXISTS idx_digests_status ON digests (status, date);
 `);
 
+// ─── v2.0.0 Migration: add edition column ────────────────────────────────────
+// SQLite supports ADD COLUMN but not DROP/MODIFY. This is safe to run repeatedly.
+// Existing rows get the default 'en-WORLD' automatically via SQLite DEFAULT.
+try {
+  sqlite.exec(`ALTER TABLE digests ADD COLUMN edition TEXT NOT NULL DEFAULT 'en-WORLD';`);
+  console.log("✅ Migration: added digests.edition column");
+} catch {
+  // Column already exists — expected on all runs after first migration
+}
+
 // ─── Storage Interface ────────────────────────────────────────────────────────
 
 /**
@@ -126,8 +136,10 @@ export interface IStorage {
   // Digests
   createDigest(digest: InsertDigest): Digest;
   getDigest(id: number): Digest | undefined;
-  getDigestByDate(date: string): Digest | undefined;
-  getLatestPublishedDigest(): Digest | undefined;
+  /** v2.0.0: edition-aware — returns digest for (date, edition) pair */
+  getDigestByDate(date: string, edition?: string): Digest | undefined;
+  /** v2.0.0: returns most recent published digest for the given edition */
+  getLatestPublishedDigest(edition?: string): Digest | undefined;
   getAllDigests(): Digest[];
   updateDigest(id: number, updates: Partial<Digest>): Digest | undefined;
   deleteDigest(id: number): void;
@@ -182,18 +194,29 @@ class Storage implements IStorage {
     return db.select().from(digests).where(eq(digests.id, id)).get();
   }
 
-  getDigestByDate(date: string): Digest | undefined {
-    return db.select().from(digests).where(eq(digests.date, date)).get();
-  }
-
-  /** Most recent published digest — used by the public reader endpoint */
-  getLatestPublishedDigest(): Digest | undefined {
+  /**
+   * Get digest by date and edition.
+   * v2.0.0: edition parameter added. Defaults to "en-WORLD" for backwards compatibility.
+   * The unique key is now (date, edition) — one digest per day per edition.
+   */
+  getDigestByDate(date: string, edition = "en-WORLD"): Digest | undefined {
     return db
       .select()
       .from(digests)
-      .where(eq(digests.status, "published"))
-      .orderBy(desc(digests.date))
+      .where(eq(digests.date, date) && eq(digests.edition, edition) as any)
       .get();
+  }
+
+  /**
+   * Most recent published digest for the given edition.
+   * v2.0.0: edition parameter added. Defaults to "en-WORLD".
+   * Used by GET /api/digest/latest?edition=...
+   */
+  getLatestPublishedDigest(edition = "en-WORLD"): Digest | undefined {
+    // Use raw SQL for the multi-column WHERE to avoid Drizzle AND() import issues
+    return (sqlite.prepare(
+      `SELECT * FROM digests WHERE status = 'published' AND edition = ? ORDER BY date DESC LIMIT 1`
+    ).get(edition)) as Digest | undefined;
   }
 
   /** All digests, newest first — used by admin panel */

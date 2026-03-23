@@ -1,7 +1,7 @@
 /**
  * @file server/trends.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 2.1.0
+ * @version 2.1.1
  *
  * Cup of News — RSS Trend Fallback Engine (Edition-Aware)
  *
@@ -202,11 +202,19 @@ const EN_AU_EXTRA: RSSSource[] = [
  *   — using /rss/ which aggregates all sections
  */
 const FR_PRIMARY_SOURCES: RSSSource[] = [
-  // ── Wire services in French ─────────────────────────────────────────────────
-  ...WIRE_SERVICES, // Reuters/AP/AFP: AI will summarise in French regardless
-
-  // ── French-language anchor feeds ───────────────────────────────────────────
+  // ── French-language anchor feeds FIRST ──────────────────────────────────────
+  // v2.1.1: Native-language sources must dominate the content pool.
+  // Wire services (English Reuters/AP/AFP) moved to the END so the AI receives
+  // primarily French-language source material, not English to be translated.
+  // ── AFP French-language feed (primary wire in French) ───────────────────────
   {
+    name: "AFP FR",
+    url: "https://www.afp.com/fr/actus/afp_fr_internet_4/rss",
+    domain: "afp.com",
+    category: "World",
+    lang: "fr",
+  },
+    {
     name: "RFI Actualités",
     url: "https://www.rfi.fr/fr/rss",
     domain: "rfi.fr",
@@ -291,10 +299,11 @@ const FR_PRIMARY_SOURCES: RSSSource[] = [
     category: "World",
     lang: "fr",
   },
-  // ── English international for global context ────────────────────────────────
+  // ── English wire services (global context only — kept to 2 feeds) ───────────
+  // Reduced from 3 to 2 to keep English content to <20% of the pool.
+  // AFP French above covers wire service content in French.
+  { name: "Reuters", url: "https://feeds.reuters.com/reuters/topNews", domain: "reuters.com", category: "World", lang: "en" },
   { name: "BBC News", url: "https://feeds.bbci.co.uk/news/world/rss.xml", domain: "bbc.com", category: "World", lang: "en" },
-  { name: "The Economist", url: "https://www.economist.com/the-world-this-week/rss.xml", domain: "economist.com", category: "World", atomStyle: true, lang: "en" },
-  { name: "Al Jazeera", url: "https://www.aljazeera.com/xml/rss/all.xml", domain: "aljazeera.com", category: "World", lang: "en" },
 ];
 
 // ─── French-Canadian specific additions ──────────────────────────────────────
@@ -351,10 +360,8 @@ const FR_CA_EXTRA: RSSSource[] = [
  * maintained, excellent RSS discipline. Covers Germany + global news in German.
  */
 const DE_PRIMARY_SOURCES: RSSSource[] = [
-  // ── Wire services ────────────────────────────────────────────────────────────
-  ...WIRE_SERVICES, // AI will summarise in German
-
-  // ── German-language anchor feeds ─────────────────────────────────────────────
+  // ── German-language anchor feeds FIRST ──────────────────────────────────────
+  // v2.1.1: Native German sources first so AI summarises from German content.
   {
     name: "Deutsche Welle",
     url: "https://rss.dw.com/rdf/rss-de-all",
@@ -447,10 +454,9 @@ const DE_PRIMARY_SOURCES: RSSSource[] = [
     category: "Science",
     lang: "de",
   },
-  // ── English international for global context ────────────────────────────────
+  // ── English wire (minimal — German DW covers global in German) ───────────────
+  { name: "Reuters", url: "https://feeds.reuters.com/reuters/topNews", domain: "reuters.com", category: "World", lang: "en" },
   { name: "BBC News", url: "https://feeds.bbci.co.uk/news/world/rss.xml", domain: "bbc.com", category: "World", lang: "en" },
-  { name: "Financial Times", url: "https://www.ft.com/rss/home/uk", domain: "ft.com", category: "Business", atomStyle: true, lang: "en" },
-  { name: "The Economist", url: "https://www.economist.com/the-world-this-week/rss.xml", domain: "economist.com", category: "World", atomStyle: true, lang: "en" },
 ];
 
 // ─── Edition Source Map ───────────────────────────────────────────────────────
@@ -513,7 +519,8 @@ function extractItems(feedXml: string, atomStyle = false) {
   const safe = feedXml.slice(0, MAX_FEED_BYTES);
   const items: Array<{ title: string; link: string; pubDate: string }> = [];
 
-  for (const match of safe.matchAll(/<item[^>]*>([\s\S]*?)<\/item>/gi)) {
+  // Use Array.from() for matchAll — required for ES2015+ iterator compatibility
+  for (const match of Array.from(safe.matchAll(/<item[^>]*>([\s\S]*?)<\/item>/gi))) {
     const xml = match[1];
     const title = extractTag(xml, "title") || "";
     const link = (

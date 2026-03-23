@@ -46,7 +46,8 @@ export default function AdminPage() {
   const { adminKey } = useAdminAuth();
   const [tab, setTab] = useState<Tab>("overview");
 
-  const headers = adminKey ? { "x-admin-key": adminKey } : {};
+  // Cast to Record<string,string> — adminKey is always a string when set
+  const headers: Record<string, string> = adminKey ? { "x-admin-key": adminKey } : {};
 
   return (
     <div className="min-h-screen bg-background text-foreground">

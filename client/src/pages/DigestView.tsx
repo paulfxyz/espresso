@@ -500,6 +500,7 @@ function GridOverlay({
   activeIndex,
   onSelect,
   onClose,
+  edition,
 }: {
   digest: DigestResponse;
   activeIndex: number;

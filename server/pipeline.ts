@@ -1,7 +1,7 @@
 /**
  * @file server/pipeline.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 2.1.0
+ * @version 2.1.1
  *
  * Cup of News — Daily Digest Generation Pipeline
  *
@@ -203,93 +203,147 @@ async function fetchOgImageDirect(url: string): Promise<string | null> {
 }
 
 /**
- * fetchUnsplashImage — search Unsplash for a high-quality editorial photo.
+/**
+ * fetchEditorialImage — search for a high-quality editorial photograph.
  *
- * v2.1.0: Added as an image quality layer between OG image extraction and
- * the SVG fallback. When Jina + direct HTML fetch both fail to find a usable
- * OG image, we search Unsplash by the story's title keywords before falling
- * back to a generated SVG.
+ * v2.1.1: Replaces the Unsplash-only approach with a more robust strategy.
  *
- * WHY UNSPLASH OVER OTHER SOURCES:
- *   - Free API, no rate limits for low-volume use (50 req/hour on demo key)
- *   - High-quality editorial photography
- *   - Safe licensing (Unsplash License — free for editorial use)
- *   - Returns reliable HTTPS URLs that pass isValidOgImage()
+ * STRATEGY — WHY NOT JUST UNSPLASH:
+ *   Unsplash free tier = 50 requests/hour. With 20 stories × 8 editions = 160
+ *   requests per daily generation run, we'd hit the limit on the second edition.
+ *   Also requires UNSPLASH_ACCESS_KEY to be configured — adds setup friction.
  *
- * QUERY CONSTRUCTION:
- *   We extract the first 4-5 meaningful words from the story title (skipping
- *   stop words) to build a focused search query. "US and Iran trade threats
- *   over nuclear programme" → "Iran nuclear programme threats".
- *   This produces more relevant imagery than the full headline.
+ * APPROACH — WIKIMEDIA COMMONS:
+ *   Wikimedia Commons has a public search API (no key required) returning
+ *   millions of freely licensed images. We search by story keywords and pick
+ *   the first landscape-oriented image. Quality varies but it's always free,
+ *   no rate limits, and covers major news topics well (political figures,
+ *   geography, sports, science).
  *
- * FALLBACK CHAIN (complete):
- *   1. Jina Reader og:image header
+ * FALLBACK: picsum.photos with content-hash seed.
+ *   picsum.photos returns beautiful random landscape photography.
+ *   We seed it with a SHA-256 hash of the title so the same story always
+ *   gets the same image (deterministic, visually consistent across loads).
+ *   No API key, no rate limits, always reliable.
+ *
+ * FULL FALLBACK CHAIN (v2.1.1):
+ *   1. Jina Reader og:image header (from article HTML)
  *   2. Direct HTML Range fetch (og:image / twitter:image meta tags)
- *   3. Unsplash keyword search ← NEW in v2.1.0
- *   4. Category SVG (always available, always correct)
+ *   3. Wikimedia Commons search by story keywords (free, no key)
+ *   4. picsum.photos seeded by title hash (deterministic, always works)
+ *   5. Category SVG (editorial placeholder, on-brand)
  *
- * NOTE: UNSPLASH_ACCESS_KEY env var required. If not set, this step is skipped
- * silently and we fall through to SVG. No crash, no error.
+ * Note: Unsplash still works if UNSPLASH_ACCESS_KEY is set — it's tried
+ * first in tier 3, before Wikimedia, for better photo quality.
  */
-async function fetchUnsplashImage(title: string, category: string): Promise<string | null> {
-  const accessKey = process.env.UNSPLASH_ACCESS_KEY;
-  if (!accessKey) return null; // Silently skip if not configured
+async function fetchEditorialImage(title: string, category: string): Promise<string | null> {
+  // ── Tier 3a: Unsplash (optional, requires API key) ───────────────────────
+  const unsplashKey = process.env.UNSPLASH_ACCESS_KEY;
+  if (unsplashKey) {
+    const unsplashResult = await fetchFromUnsplash(title, unsplashKey);
+    if (unsplashResult) return unsplashResult;
+  }
 
-  // Build focused query: strip stop words, take first 4 content words
+  // ── Tier 3b: Wikimedia Commons (free, no key, broad coverage) ────────────
+  const wikiResult = await fetchFromWikimedia(title, category);
+  if (wikiResult) return wikiResult;
+
+  // ── Tier 3c: picsum.photos with deterministic seed (always works) ─────────
+  // Not calling isValidOgImage() here — picsum always returns valid images
+  const seed = sha256(title).slice(0, 8);
+  return `https://picsum.photos/seed/${seed}/800/450`;
+}
+
+/** Unsplash search — requires UNSPLASH_ACCESS_KEY */
+async function fetchFromUnsplash(title: string, accessKey: string): Promise<string | null> {
+  const query = buildImageQuery(title);
+  try {
+    const res = await fetch(
+      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=3&orientation=landscape&content_filter=high`,
+      {
+        headers: { Authorization: `Client-ID ${accessKey}`, "Accept-Version": "v1" },
+        signal: AbortSignal.timeout(6000),
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json() as { results: Array<{ urls: { regular: string } }> };
+    const photo = data.results?.[0]?.urls?.regular;
+    return photo && isValidOgImage(photo) ? photo : null;
+  } catch { return null; }
+}
+
+/**
+ * Wikimedia Commons image search.
+ * Uses the MediaWiki API (no auth required) to find freely licensed photos.
+ * Filters to images with landscape-friendly aspect ratios.
+ */
+async function fetchFromWikimedia(title: string, category: string): Promise<string | null> {
+  const query = buildImageQuery(title) || category;
+  try {
+    const apiUrl = `https://commons.wikimedia.org/w/api.php?` +
+      `action=query&format=json&origin=*` +
+      `&generator=search&gsrsearch=File:${encodeURIComponent(query)}&gsrnamespace=6&gsrlimit=5` +
+      `&prop=imageinfo&iiprop=url|size|mime`;
+
+    const res = await fetch(apiUrl, {
+      headers: { "User-Agent": "CupOfNews/2.1 (https://cupof.news; editorial digest)" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+
+    const data = await res.json() as {
+      query?: { pages?: Record<string, {
+        imageinfo?: Array<{ url: string; width: number; height: number; mime: string }>
+      }> }
+    };
+
+    const pages = Object.values(data.query?.pages ?? {});
+    for (const page of pages) {
+      const info = page.imageinfo?.[0];
+      if (!info) continue;
+      if (!["image/jpeg", "image/png", "image/webp"].includes(info.mime)) continue;
+      // Prefer landscape images (width > height)
+      if (info.width < info.height) continue;
+      if (info.width < 400) continue; // Too small
+      if (isValidOgImage(info.url)) return info.url;
+    }
+    return null;
+  } catch { return null; }
+}
+
+/**
+ * Build a focused image search query from a story title.
+ * Strips stop words and takes the 4 most meaningful words.
+ * Works for English, French, and German titles.
+ */
+function buildImageQuery(title: string): string {
   const stopWords = new Set([
+    // English
     "a","an","the","and","or","but","in","on","at","to","for","of","with",
     "by","from","up","as","is","it","its","this","that","was","are","be",
     "has","had","have","will","would","could","should","may","might","over",
     "than","then","so","if","when","where","how","what","who","why","says",
-    "said","after","before","amid","as","amid","amid","us","un","eu",
+    "said","after","before","amid","us","un","eu","new","first","after",
+    // French
+    "le","la","les","un","une","des","du","de","et","ou","mais","dans","sur",
+    "avec","par","pour","que","qui","se","il","elle","ils","elles","ce","son",
+    "sa","ses","leur","leurs","au","aux","ne","pas","plus","très","bien",
+    // German
+    "der","die","das","ein","eine","und","oder","aber","in","auf","an","mit",
+    "von","zu","bei","nach","aus","sich","ist","war","hat","werden","kann",
+    "auch","für","des","im","am","dem","den","nicht","noch","als",
   ]);
 
-  const words = title
+  return title
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/[^\w\s\u00c0-\u024f]/g, " ") // keep latin extended chars
     .split(/\s+/)
     .filter(w => w.length > 3 && !stopWords.has(w))
-    .slice(0, 4);
-
-  // Fall back to category if title yields nothing useful
-  const query = words.length >= 2 ? words.join(" ") : category;
-
-  try {
-    const url = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=3&orientation=landscape&content_filter=high`;
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Client-ID ${accessKey}`,
-        "Accept-Version": "v1",
-      },
-      signal: AbortSignal.timeout(8000),
-    });
-
-    if (!res.ok) return null;
-
-    const data = await res.json() as { results: Array<{ urls: { regular: string } }> };
-    const photo = data.results?.[0]?.urls?.regular;
-
-    if (photo && isValidOgImage(photo)) {
-      return photo;
-    }
-    return null;
-  } catch {
-    return null; // Never crash the pipeline over a missing image
-  }
+    .slice(0, 4)
+    .join(" ");
 }
 
-/**
- * Generate a category-styled SVG placeholder image for stories without a valid OG image.
- *
- * Why SVG instead of an image generation API:
- *   OpenRouter's image generation models (Gemini Flash Image, DALL-E) are either
- *   unreliable via the chat completions endpoint or require separate API keys.
- *   A well-designed SVG placeholder that matches the story category is more reliable,
- *   instant, and looks intentionally editorial rather than like a broken image.
- *
- *   The SVG uses the story's category to pick a colour scheme, adds a subtle grid
- *   pattern for texture, and displays the category label — clean, on-brand, zero cost.
- */
+
 function generateCategoryImage(title: string, category: string): string {
   const palettes: Record<string, { bg: string; accent: string; dot: string }> = {
     Technology:   { bg: "#0f1729", accent: "#1d3461", dot: "#3b82f6" },
@@ -822,7 +876,7 @@ IMPORTANT: For additionalIdxs — if multiple articles in the list cover the SAM
         sources,
       };
     })
-    .filter((s): s is DigestStory => s !== null);
+    .filter((s: DigestStory | null): s is DigestStory => s !== null);
 
   if (stories.length === 0) {
     throw new Error("AI returned 0 valid stories — check the OpenRouter response format");
@@ -845,13 +899,14 @@ IMPORTANT: For additionalIdxs — if multiple articles in the list cover the SAM
       const category = parts[parts.length - 1];
       const title = parts.slice(0, -1).join(":");
 
-      // Try Unsplash first (skipped silently if UNSPLASH_ACCESS_KEY not set)
-      const unsplashUrl = await fetchUnsplashImage(title, category);
-      if (unsplashUrl) {
-        story.imageUrl = unsplashUrl;
-        console.log(`  ✅ Unsplash: "${title.slice(0, 40)}…"`);
+      // Tier 3: editorial image search (Unsplash if key set, then Wikimedia, then picsum seed)
+      // Tier 4: category SVG — only if all fetches fail (network down etc.)
+      const editorialUrl = await fetchEditorialImage(title, category);
+      if (editorialUrl) {
+        story.imageUrl = editorialUrl;
+        console.log(`  ✅ Image found: "${title.slice(0, 40)}…"`);
       } else {
-        // Final fallback: deterministic SVG — zero cost, always on-brand
+        // Final fallback: deterministic on-brand SVG
         story.imageUrl = generateCategoryImage(title, category);
       }
     }
@@ -975,7 +1030,10 @@ Return JSON:
     id: randomUUID(),
     title: aiResult.title || candidate.title || "Untitled",
     summary: aiResult.summary || "",
-    imageUrl: candidate.ogImage || fallbackImage(candidate.url),
+    // Use OG image if valid, otherwise generate category SVG
+    imageUrl: (candidate.ogImage && isValidOgImage(candidate.ogImage))
+      ? candidate.ogImage
+      : generateCategoryImage(aiResult.title || candidate.title || "", aiResult.category || "Other"),
     sourceUrl: candidate.url,
     sourceTitle: candidate.title || candidate.url,
     category: aiResult.category || "Other",

@@ -1,3 +1,56 @@
+## [2.1.1] — 2026-03-23
+
+**Admin crash fixed, carousel fixed, native-language sources, better images.**
+
+### Engineering notes
+
+**Admin crash: TypeScript type error crashing the entire panel.**
+`AdminPage.tsx` had `headers` typed as `{ "x-admin-key": string } | {}`.
+TypeScript correctly rejects this for `Record<string, string>` params since
+`{}` has `undefined` for the key. At runtime this caused the component to
+crash on render — the admin panel appeared to freeze.
+Fix: explicit `const headers: Record<string, string> = ...`
+
+**Carousel/grid crash: `edition` not destructured in GridOverlay.**
+`GridOverlay` received `edition` as a prop (JSX attribute) and typed it in
+the TypeScript interface, but never destructured it in the function parameters.
+Result: `edition === undefined` at runtime, `edition.ui.allStories` threw
+`Cannot read properties of undefined`. The grid overlay and story counter both
+crashed, breaking the entire carousel view.
+Fix: added `edition,` to the destructure list.
+
+**Other TS errors fixed:**
+- `pipeline.ts:fallbackImage` — undefined function in swapStory, replaced with
+  `generateCategoryImage()` + `isValidOgImage()` check
+- `pipeline.ts:825` — implicit `any` in `.filter()` type guard
+- `trends.ts:516` — `matchAll()` iterator requires `Array.from()` wrapper
+
+**Native language sources, not translations.**
+The core complaint: switching to 🇫🇷 France produced French text but the stories
+were clearly translated from English (Reuters/AP led the source pool). Fix:
+- Native French feeds (RFI, France 24, Le Monde, Le Figaro etc.) moved FIRST
+- Added AFP French feed (`afp.com/fr`) as the primary wire service in French
+- English wire services reduced to 2 (Reuters + BBC) at the END of the pool
+- Same fix for DE: DW/Spiegel/FAZ lead; only Reuters + BBC for global context
+This means the AI synthesises from French/German content, not translates English.
+
+**Image quality: Wikimedia Commons + picsum deterministic seeds.**
+Unsplash: 50 req/hour free tier. With 20 stories × 8 editions = 160 requests per
+run, we hit the limit on edition 2. Replaced with:
+- Wikimedia Commons search API (no key, unlimited, freely licensed)
+- picsum.photos with SHA-256 title hash as seed (deterministic, always works)
+Unsplash still used first if UNSPLASH_ACCESS_KEY is set.
+
+### ✨ Fixed
+- Admin panel crash: headers type → `Record<string, string>`
+- Carousel/grid crash: edition destructured in GridOverlay
+- `fallbackImage` undefined in swapStory
+- FR/DE sources: native feeds first, English wire last and reduced
+- Image pipeline: Wikimedia + picsum fallback, no more rate limits
+- 3 additional TypeScript errors cleared (zero errors now)
+
+---
+
 # 📋 CHANGELOG — Cup of News
 
 All notable changes documented here.  

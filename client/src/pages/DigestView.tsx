@@ -295,7 +295,7 @@ function StoryCard({ story, index, total }: { story: DigestStory; index: number;
       <div className="w-10 h-0.5 bg-[#E3120B] mb-6" />
 
       {/* Summary — editorial serif, comfortable reading size on mobile */}
-      <p className="text-lg sm:text-xl lg:text-2xl font-editorial leading-[2.2] text-foreground/85">
+      <p className="text-lg sm:text-xl lg:text-2xl font-editorial leading-[2.4] text-foreground/85">
         {story.summary}
       </p>
 

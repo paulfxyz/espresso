@@ -100,7 +100,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
    * Public. Used by uptime monitors, Docker HEALTHCHECK, GitHub Actions.
    */
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", version: "1.2.0" });
+    res.json({ status: "ok", version: "1.3.0" });
   });
 
   // ── Setup ──────────────────────────────────────────────────────────────────
@@ -377,6 +377,54 @@ export function registerRoutes(httpServer: Server, app: Express) {
     if (!updated) return res.status(404).json({ error: "Digest not found" });
     res.json({ success: true, digest: updated });
   });
+
+  // ── Editorial Prompt ──────────────────────────────────────────────────────
+
+  /**
+   * GET /api/admin/editorial-prompt
+   * Admin. Returns the current editorial prompt (user's interest/personality config).
+   * Empty string if not set.
+   *
+   * The editorial prompt is injected into the AI system prompt at generation time,
+   * telling the model who the reader is and what they care about.
+   */
+  app.get("/api/admin/editorial-prompt", requireApiKey, (_req, res) => {
+    const prompt = storage.getConfig("editorial_prompt") || "";
+    res.json({ prompt });
+  });
+
+  /**
+   * POST /api/admin/editorial-prompt
+   * Admin. Save or update the editorial prompt.
+   * Body: { prompt: string } — max 2000 chars
+   *
+   * Example prompt:
+   *   "I'm a tech entrepreneur in Lisbon interested in AI, European startups,
+   *    geopolitics, and climate tech. I prefer analytical takes over breaking news.
+   *    Avoid sports, celebrity gossip, and US domestic politics unless globally significant."
+   */
+  app.post("/api/admin/editorial-prompt", requireApiKey, (req, res) => {
+    const { prompt } = req.body || {};
+    if (typeof prompt !== "string") {
+      return res.status(400).json({ error: "prompt must be a string" });
+    }
+    if (prompt.length > 2000) {
+      return res.status(400).json({ error: "prompt must be under 2000 characters" });
+    }
+    storage.setConfig("editorial_prompt", prompt.trim());
+    res.json({ success: true, prompt: prompt.trim() });
+  });
+
+  /**
+   * DELETE /api/admin/editorial-prompt
+   * Admin. Clear the editorial prompt — resets to neutral AI selection.
+   */
+  app.delete("/api/admin/editorial-prompt", requireApiKey, (_req, res) => {
+    storage.setConfig("editorial_prompt", "");
+    res.json({ success: true, message: "Editorial prompt cleared." });
+  });
+
+  // ── Digest reorder ─────────────────────────────────────────────────────────
 
   /**
    * POST /api/digest/:id/reorder

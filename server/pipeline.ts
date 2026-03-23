@@ -413,6 +413,10 @@ export async function runDailyPipeline(
 
   // ── Step 5: AI ranking + summarization ──────────────────────────────────
 
+  // Load editorial prompt — user-defined personality/interest layer
+  // Stored in config table under key "editorial_prompt"
+  const editorialPrompt = storage.getConfig("editorial_prompt") || "";
+
   const contentItems = allProcessed.map((p, idx) => ({
     idx: idx + 1,
     url: p.link.url,
@@ -424,9 +428,17 @@ export async function runDailyPipeline(
     trendSource: p.link.notes || undefined,
   }));
 
+  // Build the system prompt — base rules + user's editorial lens
+  // The editorial prompt is the most powerful personalisation layer:
+  // it tells the AI *who you are* and *what you care about*, so it can
+  // select and frame stories through your specific lens.
+  const editorialSection = editorialPrompt.trim()
+    ? `\n\nREADER PROFILE & EDITORIAL LENS (high priority — let this guide your selection and tone):\n${editorialPrompt.trim()}`
+    : "";
+
   const systemPrompt = `You are the editorial AI for "Cup of News" — a curated morning news digest inspired by The Economist Espresso. Your writing is intelligent, slightly opinionated, and respects the reader's time.
 
-Your task: from the provided list of articles, select exactly 20 that together form the best morning briefing. Prioritize newsworthiness, recency, diversity of topics, and global relevance.
+Your task: from the provided list of articles, select exactly 20 that together form the best morning briefing. Prioritize newsworthiness, recency, diversity of topics, and global relevance.${editorialSection}
 
 Editorial rules:
 - STRONGLY prefer user-submitted content (isTrend=false) over auto-fetched trends
@@ -434,7 +446,8 @@ Editorial rules:
 - Avoid stories marked recentlyUsed=true unless they represent critical breaking developments
 - No duplicate stories — if two items cover the same event, pick the stronger one
 - Each summary: maximum 200 words, active voice, editorial confidence — no hedging
-- Cover diverse categories where possible (don't publish 8 World + 2 Business)
+- If a reader profile is provided above, bias story selection and framing toward their stated interests
+- Cover diverse categories where possible
 - Return ONLY valid JSON matching the schema. No markdown fences, no extra keys.`;
 
   const userPrompt = `Here are ${contentItems.length} articles. Select the 20 best and summarize them. Then add a closing quote.

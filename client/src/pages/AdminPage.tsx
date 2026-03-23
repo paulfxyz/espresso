@@ -37,7 +37,7 @@ interface DigestResponse {
   closingQuoteAuthor: string;
 }
 
-type Tab = "overview" | "links" | "digest";
+type Tab = "overview" | "links" | "digest" | "editorial";
 
 export default function AdminPage() {
   const { theme, toggle } = useTheme();
@@ -71,7 +71,7 @@ export default function AdminPage() {
 
         {/* Tabs */}
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex">
-          {(["overview", "links", "digest"] as Tab[]).map(t => (
+          {(["overview", "links", "digest", "editorial"] as Tab[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -92,6 +92,7 @@ export default function AdminPage() {
         {tab === "overview" && <OverviewTab headers={headers} />}
         {tab === "links"    && <LinksTab    headers={headers} />}
         {tab === "digest"   && <DigestTab   headers={headers} />}
+        {tab === "editorial" && <EditorialTab headers={headers} />}
       </div>
 
       <footer className="border-t border-border py-4 text-center text-xs text-muted-foreground font-ui">
@@ -522,6 +523,159 @@ function DigestTab({ headers }: { headers: Record<string, string> }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Editorial Prompt Tab ──────────────────────────────────────────────────────
+/**
+ * The Editorial Prompt is the most powerful personalisation feature in Cup of News.
+ * It tells the AI who the reader is — their interests, profession, world view —
+ * so the model selects and frames stories through that specific lens.
+ *
+ * Stored in the config table as "editorial_prompt".
+ * Injected into the AI system prompt at generation time.
+ * Max 2000 characters.
+ */
+function EditorialTab({ headers }: { headers: Record<string, string> }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [draft, setDraft] = useState<string | null>(null); // null = not loaded yet
+  const MAX_CHARS = 2000;
+
+  const { data, isLoading } = useQuery<{ prompt: string }>({
+    queryKey: ["/api/admin/editorial-prompt"],
+    queryFn: async () => {
+      const r = await apiRequest("GET", "/api/admin/editorial-prompt", undefined, headers);
+      return r.ok ? r.json() : { prompt: "" };
+    },
+  });
+
+  // Initialise draft from fetched data
+  const value = draft !== null ? draft : (data?.prompt ?? "");
+  const charCount = value.length;
+  const isDirty = draft !== null && draft !== (data?.prompt ?? "");
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/admin/editorial-prompt", { prompt: value }, headers);
+      if (!r.ok) throw new Error((await r.json()).error);
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Editorial prompt saved — takes effect on next generation" });
+      setDraft(null);
+      qc.invalidateQueries({ queryKey: ["/api/admin/editorial-prompt"] });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const clearMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("DELETE" as any, "/api/admin/editorial-prompt", undefined, headers);
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Editorial prompt cleared — AI will use neutral selection" });
+      setDraft("");
+      qc.invalidateQueries({ queryKey: ["/api/admin/editorial-prompt"] });
+    },
+  });
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      {/* Header */}
+      <div>
+        <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground font-ui mb-1">
+          Editorial Prompt
+        </h2>
+        <p className="text-sm font-editorial text-muted-foreground leading-relaxed">
+          Tell the AI who you are and what you care about. It will select and frame your 20 daily stories through this lens. The more specific, the more personal your digest becomes.
+        </p>
+      </div>
+
+      {/* Example */}
+      <div className="border border-border bg-muted/20 p-5 space-y-2">
+        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground font-ui">Example</p>
+        <p className="text-sm font-editorial text-muted-foreground leading-relaxed italic">
+          "I'm a tech entrepreneur in Lisbon interested in AI, European startups, geopolitics, and climate tech. I prefer analytical long-form takes over breaking news. Avoid sports, celebrity gossip, and US domestic politics unless globally significant. Favour stories from The Economist, FT, and Wired over tabloids."
+        </p>
+      </div>
+
+      {/* Textarea */}
+      <div className="space-y-2">
+        {isLoading ? (
+          <div className="w-full h-48 bg-muted animate-pulse rounded" />
+        ) : (
+          <>
+            <textarea
+              value={value}
+              onChange={e => setDraft(e.target.value)}
+              placeholder={`Describe your interests, profession, and what kind of news matters to you…\n\nExamples:\n• Topics you want more of: AI, climate, Europe, startups…\n• Topics to deprioritise: sports, celebrity, local politics…\n• Tone preference: analytical, brief, long-form…\n• Sources you trust or distrust`}
+              maxLength={MAX_CHARS}
+              rows={12}
+              data-testid="editorial-prompt-textarea"
+              className="w-full text-sm px-4 py-3 border border-border bg-background focus:outline-none focus:border-[#E3120B] focus:ring-1 focus:ring-[#E3120B] font-editorial leading-relaxed resize-none"
+            />
+            <div className="flex items-center justify-between">
+              <span className={`text-xs font-ui tabular-nums ${charCount > MAX_CHARS * 0.9 ? "text-[#E3120B]" : "text-muted-foreground"}`}>
+                {charCount} / {MAX_CHARS}
+              </span>
+              {isDirty && (
+                <span className="text-xs text-[#E3120B] font-ui font-bold">Unsaved changes</span>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <button
+          onClick={() => saveMutation.mutate()}
+          disabled={saveMutation.isPending || isLoading || charCount > MAX_CHARS}
+          data-testid="save-editorial-prompt"
+          className="flex items-center gap-2 px-6 py-2.5 bg-[#E3120B] text-white text-sm font-bold hover:bg-[#B50D08] transition-colors disabled:opacity-40 font-ui"
+        >
+          {saveMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : null}
+          Save Prompt
+        </button>
+
+        {value && (
+          <button
+            onClick={() => { if (confirm("Clear your editorial prompt? The AI will use neutral selection.")) clearMutation.mutate(); }}
+            disabled={clearMutation.isPending}
+            className="px-4 py-2.5 border border-border text-sm font-ui text-muted-foreground hover:text-[#E3120B] hover:border-[#E3120B] transition-colors"
+          >
+            Clear
+          </button>
+        )}
+
+        {draft !== null && (
+          <button
+            onClick={() => setDraft(null)}
+            className="px-4 py-2.5 text-sm font-ui text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Discard changes
+          </button>
+        )}
+      </div>
+
+      {/* How it works */}
+      <div className="border-t border-border pt-6 space-y-3">
+        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground font-ui">How it works</p>
+        <div className="space-y-2 text-sm font-editorial text-muted-foreground leading-relaxed">
+          <p>Your prompt is injected directly into the AI's instructions before each generation. It acts as a <strong className="text-foreground font-bold">reader profile</strong> — the AI uses it to:</p>
+          <ul className="list-none space-y-1 pl-0">
+            <li className="flex gap-2"><span className="text-[#E3120B] font-bold flex-shrink-0">→</span> Prioritise topics and sources you care about</li>
+            <li className="flex gap-2"><span className="text-[#E3120B] font-bold flex-shrink-0">→</span> Deprioritise categories you find irrelevant</li>
+            <li className="flex gap-2"><span className="text-[#E3120B] font-bold flex-shrink-0">→</span> Frame summaries in a tone that suits you</li>
+            <li className="flex gap-2"><span className="text-[#E3120B] font-bold flex-shrink-0">→</span> Select the closing quote with your perspective in mind</li>
+          </ul>
+          <p className="text-xs text-muted-foreground/60">Changes take effect on the next generation. Regenerate today's digest to see the result immediately.</p>
+        </div>
+      </div>
     </div>
   );
 }

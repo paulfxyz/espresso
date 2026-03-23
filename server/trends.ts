@@ -235,6 +235,70 @@ const TRUSTED_RSS_SOURCES: RSSSource[] = [
     domain: "theatlantic.com",
     category: "Culture",
   },
+
+  // ── Sports (new in v1.5.1) ────────────────────────────────────────────────
+  {
+    name: "BBC Sport",
+    url: "https://feeds.bbci.co.uk/sport/rss.xml",
+    domain: "bbc.com",
+    category: "Sports",
+  },
+  {
+    name: "ESPN Top Headlines",
+    url: "https://www.espn.com/espn/rss/news",
+    domain: "espn.com",
+    category: "Sports",
+  },
+
+  // ── Latin America & Global South (new in v1.5.1) ─────────────────────────
+  {
+    name: "Latin American Herald Tribune",
+    url: "https://www.laht.com/rss.xml",
+    domain: "laht.com",
+    category: "World",
+  },
+  {
+    name: "Merco Press",
+    url: "https://en.mercopress.com/rss",
+    domain: "mercopress.com",
+    category: "World",
+  },
+
+  // ── Asia-Pacific (new in v1.5.1) ──────────────────────────────────────────
+  {
+    name: "The Japan Times",
+    url: "https://www.japantimes.co.jp/feed",
+    domain: "japantimes.co.jp",
+    category: "World",
+  },
+  {
+    name: "The Hindu",
+    url: "https://www.thehindu.com/news/international/?service=rss",
+    domain: "thehindu.com",
+    category: "World",
+  },
+
+  // ── Health & Medicine (new in v1.5.1) ─────────────────────────────────────
+  {
+    name: "New Scientist",
+    url: "https://www.newscientist.com/feed/home",
+    domain: "newscientist.com",
+    category: "Science",
+  },
+  {
+    name: "Stat News",
+    url: "https://www.statnews.com/feed/",
+    domain: "statnews.com",
+    category: "Health",
+  },
+
+  // ── Tech & Culture (new in v1.5.1) ────────────────────────────────────────
+  {
+    name: "Rest of World",
+    url: "https://restofworld.org/feed/",
+    domain: "restofworld.org",
+    category: "Technology",
+  },
 ];
 
 // ─── Constants ────────────────────────────────────────────────────────────────

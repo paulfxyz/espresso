@@ -157,6 +157,50 @@ function isValidOgImage(url: string | null): boolean {
 }
 
 /**
+ * Directly fetch a URL's HTML and extract the og:image meta tag.
+ * Used as a second-pass fallback when Jina Reader doesn't return an image.
+ * Fetches only the first 20KB of HTML (enough for <head>) to keep it fast.
+ */
+async function fetchOgImageDirect(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "CupOfNews-Bot/1.5 (+https://cupof.news)",
+        "Accept": "text/html",
+        "Range": "bytes=0-20000",
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+
+    // og:image (standard)
+    let m = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+           || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+    if (m) {
+      let img = m[1];
+      if (img.startsWith("//")) img = "https:" + img;
+      if (img.startsWith("/")) { try { img = new URL(img, url).href; } catch {} }
+      if (isValidOgImage(img)) return img;
+    }
+
+    // twitter:image fallback
+    m = html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i)
+      || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i);
+    if (m) {
+      let img = m[1];
+      if (img.startsWith("//")) img = "https:" + img;
+      if (img.startsWith("/")) { try { img = new URL(img, url).href; } catch {} }
+      if (isValidOgImage(img)) return img;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Generate a category-styled SVG placeholder image for stories without a valid OG image.
  *
  * Why SVG instead of an image generation API:
@@ -325,7 +369,13 @@ async function extractLinkBatch(
       }
 
       try {
-        const { text, title, ogImage } = await extractViaJina(link.url);
+        const { text, title, ogImage: jinaOg } = await extractViaJina(link.url);
+
+        // If Jina didn't find an OG image, do a direct lightweight HTML fetch
+        let ogImage = jinaOg;
+        if (!isValidOgImage(ogImage)) {
+          ogImage = await fetchOgImageDirect(link.url);
+        }
 
         // Cache back to DB (fire-and-forget — don't block pipeline on this)
         const hash = sha256(text);

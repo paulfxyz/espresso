@@ -27,7 +27,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  Sun, Moon, ArrowUpRight, ChevronLeft, ChevronRight, LayoutGrid, X
+  Sun, Moon, ArrowUpRight, ChevronLeft, ChevronRight, LayoutGrid, X, Rss
 } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
 import type { DigestStory } from "@shared/schema";
@@ -53,6 +53,7 @@ export default function DigestView() {
   const { theme, toggle } = useTheme();
   const [cardIndex, setCardIndex] = useState(0);
   const [showGrid, setShowGrid] = useState(false);
+  const [showSources, setShowSources] = useState(false);
 
   const { data: digest, isLoading } = useQuery<DigestResponse | null>({
     queryKey: ["/api/digest/latest"],
@@ -171,6 +172,13 @@ export default function DigestView() {
               aria-label="Overview grid"
             >
               <LayoutGrid size={16} />
+            </button>
+            <button
+              onClick={() => setShowSources(v => !v)}
+              className="w-9 h-9 flex items-center justify-center hover:bg-accent rounded transition-colors"
+              aria-label="RSS Sources"
+            >
+              <Rss size={15} />
             </button>
             <button
               onClick={toggle}
@@ -453,6 +461,118 @@ function EmptyView() {
             Submit links, generate a digest, and publish it to start reading.
           </p>
   
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Sources Modal ────────────────────────────────────────────────────────────
+
+const RSS_SOURCES = [
+  // Wire Services
+  { name: "Reuters",              url: "https://www.reuters.com",           category: "Wire",       flag: "🌐" },
+  { name: "Associated Press",     url: "https://apnews.com",                category: "Wire",       flag: "🌐" },
+  { name: "AFP",                  url: "https://www.afp.com",               category: "Wire",       flag: "🌐" },
+  // English Broadsheets
+  { name: "BBC News",             url: "https://www.bbc.com/news",          category: "Broadsheet", flag: "🇬🇧" },
+  { name: "The Guardian",         url: "https://www.theguardian.com",       category: "Broadsheet", flag: "🇬🇧" },
+  { name: "The Telegraph",        url: "https://www.telegraph.co.uk",       category: "Broadsheet", flag: "🇬🇧" },
+  { name: "The Independent",      url: "https://www.independent.co.uk",     category: "Broadsheet", flag: "🇬🇧" },
+  { name: "NYT World",            url: "https://www.nytimes.com",           category: "Broadsheet", flag: "🇺🇸" },
+  { name: "WSJ World",            url: "https://www.wsj.com",              category: "Broadsheet", flag: "🇺🇸" },
+  { name: "The Atlantic",         url: "https://www.theatlantic.com",       category: "Broadsheet", flag: "🇺🇸" },
+  // The Economist
+  { name: "The Economist",        url: "https://www.economist.com",         category: "Economist",  flag: "🇬🇧" },
+  { name: "Economist Finance",    url: "https://www.economist.com/finance-and-economics", category: "Economist", flag: "🇬🇧" },
+  // Business & Finance
+  { name: "Financial Times",      url: "https://www.ft.com",               category: "Finance",    flag: "🇬🇧" },
+  { name: "Bloomberg",            url: "https://www.bloomberg.com",         category: "Finance",    flag: "🇺🇸" },
+  // European Press
+  { name: "Le Monde (EN)",        url: "https://www.lemonde.fr/en",         category: "Europe",     flag: "🇫🇷" },
+  { name: "Der Spiegel (EN)",     url: "https://www.spiegel.de/international", category: "Europe",  flag: "🇩🇪" },
+  { name: "Euronews",             url: "https://www.euronews.com",          category: "Europe",     flag: "🇪🇺" },
+  // Tech Press
+  { name: "Ars Technica",         url: "https://arstechnica.com",           category: "Tech",       flag: "💻" },
+  { name: "Wired",                url: "https://www.wired.com",             category: "Tech",       flag: "💻" },
+  { name: "MIT Tech Review",      url: "https://www.technologyreview.com",  category: "Tech",       flag: "💻" },
+  { name: "The Verge",            url: "https://www.theverge.com",          category: "Tech",       flag: "💻" },
+  // Science
+  { name: "Nature",               url: "https://www.nature.com",            category: "Science",    flag: "🔬" },
+  { name: "Scientific American",  url: "https://www.scientificamerican.com",category: "Science",    flag: "🔬" },
+  // Global South
+  { name: "Al Jazeera",           url: "https://www.aljazeera.com",         category: "Global",     flag: "🌍" },
+  { name: "SCMP",                 url: "https://www.scmp.com",              category: "Global",     flag: "🌏" },
+];
+
+const CATEGORY_ORDER = ["Wire", "Broadsheet", "Economist", "Finance", "Europe", "Tech", "Science", "Global"];
+
+function SourcesModal({ onClose }: { onClose: () => void }) {
+  const grouped = CATEGORY_ORDER.reduce((acc, cat) => {
+    acc[cat] = RSS_SOURCES.filter(s => s.category === cat);
+    return acc;
+  }, {} as Record<string, typeof RSS_SOURCES>);
+
+  const categoryLabels: Record<string, string> = {
+    Wire: "Wire Services",
+    Broadsheet: "Broadsheets",
+    Economist: "The Economist",
+    Finance: "Business & Finance",
+    Europe: "European Press",
+    Tech: "Tech & Innovation",
+    Science: "Science",
+    Global: "Global South",
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm px-0 sm:px-4">
+      <div className="bg-card w-full sm:max-w-2xl max-h-[85vh] flex flex-col border border-border sm:rounded-none shadow-2xl">
+        {/* Header */}
+        <div className="flex-shrink-0 border-b-2 border-[#E3120B] px-6 py-4 flex items-center justify-between">
+          <div>
+            <h2 className="font-black text-base font-display uppercase tracking-wide">RSS Sources</h2>
+            <p className="text-xs text-muted-foreground font-ui mt-0.5">{RSS_SOURCES.length} trusted outlets · Auto-fills your digest when you haven't submitted links</p>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 flex items-center justify-center hover:bg-accent rounded transition-colors text-muted-foreground hover:text-foreground">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Sources grid — scrollable */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+          {CATEGORY_ORDER.map(cat => (
+            <div key={cat}>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#E3120B] font-ui mb-2.5">
+                {categoryLabels[cat]}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-border">
+                {grouped[cat].map(source => (
+                  <a
+                    key={source.name}
+                    href={source.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="bg-card px-4 py-2.5 flex items-center justify-between hover:bg-accent/50 transition-colors group"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-base">{source.flag}</span>
+                      <span className="text-sm font-bold font-display group-hover:text-[#E3120B] transition-colors">
+                        {source.name}
+                      </span>
+                    </div>
+                    <ArrowUpRight size={12} className="text-muted-foreground group-hover:text-[#E3120B] transition-colors flex-shrink-0" />
+                  </a>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div className="flex-shrink-0 border-t border-border px-6 py-3">
+          <p className="text-xs text-muted-foreground font-editorial leading-relaxed">
+            Your own submitted links always take priority. These sources fill the gaps automatically — no API keys, no cost.
+          </p>
         </div>
       </div>
     </div>

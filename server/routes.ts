@@ -100,7 +100,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
    * Public. Used by uptime monitors, Docker HEALTHCHECK, GitHub Actions.
    */
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", version: "1.3.1" });
+    res.json({ status: "ok", version: "1.4.0" });
   });
 
   // ── Setup ──────────────────────────────────────────────────────────────────

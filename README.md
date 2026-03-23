@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.3.0-red?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-1.4.0-red?style=for-the-badge)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
 ![Node.js](https://img.shields.io/badge/Node.js-20+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)

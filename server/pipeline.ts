@@ -124,17 +124,92 @@ function parseJinaOgImage(jinaMarkdown: string, baseUrl: string): string | null 
 }
 
 /**
- * Stable image fallback using picsum.photos with a seeded hash.
- * The seed ensures the same story always gets the same placeholder image
- * (deterministic, not random on each generation).
- *
- * Replaced source.unsplash.com which was shut down by Unsplash in 2023
- * and now returns 404 for all requests. (Audit finding v0.2.0)
+ * Validate whether a URL is a usable story image.
+ * Rejects: SVG logos, tracking pixels, known CDN fallback logos,
+ * data URIs, tiny icons, and non-image URLs.
  */
-function fallbackImage(seed: string): string {
-  // picsum uses numeric seeds — take first 8 hex chars of hash → decimal
-  const numericSeed = parseInt(sha256(seed).slice(0, 8), 16) % 1000;
-  return `https://picsum.photos/seed/${numericSeed}/800/450`;
+function isValidOgImage(url: string | null): boolean {
+  if (!url || url.length < 10) return false;
+  if (url.startsWith("data:")) return false;
+
+  // Reject SVGs (logos, icons — not photos)
+  if (url.endsWith(".svg") || url.includes(".svg?")) return false;
+
+  // Reject known tracking/analytics pixels
+  const trackingHosts = ["bat.bing.com", "google.com/preferences", "pixel.", "beacon.", "track."];
+  if (trackingHosts.some(h => url.includes(h))) return false;
+
+  // Reject known outlet logo fallbacks (not editorial photos)
+  const logoPatterns = [
+    "logo", "favicon", "icon-google", "featured-logo",
+    "assets/wired", "vector/euronews", "static/media/icon",
+    "icon-192", "icon-512", "apple-touch",
+  ];
+  const lower = url.toLowerCase();
+  if (logoPatterns.some(p => lower.includes(p))) return false;
+
+  // Must look like an image path
+  const imageExts = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"];
+  const hasImageExt = imageExts.some(e => lower.includes(e));
+  const hasImageCDN = ["cdn.", "images.", "img.", "media.", "static.", "photo", "thumb", "upload", "cpsprod", "i.guim", "i.imgur", "twimg"].some(h => lower.includes(h));
+
+  return hasImageExt || hasImageCDN;
+}
+
+/**
+ * Generate a contextual editorial image via OpenRouter's image generation.
+ * Uses google/gemini-3.1-flash-image-preview — fast, cheap, high quality.
+ *
+ * Falls back to picsum if generation fails (non-blocking).
+ * Called only when OG image is missing or invalid.
+ */
+async function generateStoryImage(
+  title: string,
+  category: string,
+  apiKey: string
+): Promise<string> {
+  try {
+    const prompt = `Editorial news photograph, high quality journalism style. ${category} story: "${title}". Photorealistic, documentary style, no text, no logos, cinematic composition.`;
+
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/paulfxyz/cup-of-news",
+        "X-Title": "Cup of News",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-3.1-flash-image-preview",
+        messages: [{ role: "user", content: prompt }],
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+
+    if (!res.ok) throw new Error(`Image gen HTTP ${res.status}`);
+    const data = await res.json();
+
+    // Gemini image response: content parts with image_url
+    const parts = data?.choices?.[0]?.message?.content;
+    if (Array.isArray(parts)) {
+      for (const part of parts) {
+        if (part?.type === "image_url" && part?.image_url?.url) {
+          return part.image_url.url;
+        }
+      }
+    }
+    // Some models return base64 inline
+    if (typeof parts === "string" && parts.startsWith("data:image")) {
+      return parts;
+    }
+
+    throw new Error("No image in response");
+  } catch (e) {
+    console.warn(`⚠️  Image generation failed for "${title}":`, (e as Error).message);
+    // Graceful fallback — seeded picsum (deterministic, not random)
+    const numericSeed = parseInt(sha256(title).slice(0, 8), 16) % 1000;
+    return `https://picsum.photos/seed/${numericSeed}/800/450`;
+  }
 }
 
 // ─── Jina Reader ──────────────────────────────────────────────────────────────
@@ -440,14 +515,24 @@ export async function runDailyPipeline(
 
 Your task: from the provided list of articles, select exactly 20 that together form the best morning briefing. Prioritize newsworthiness, recency, diversity of topics, and global relevance.${editorialSection}
 
-Editorial rules:
+Editorial rules — DIVERSITY IS MANDATORY:
 - STRONGLY prefer user-submitted content (isTrend=false) over auto-fetched trends
 - Only use trend stories (isTrend=true) to fill slots if user content is genuinely insufficient
 - Avoid stories marked recentlyUsed=true unless they represent critical breaking developments
-- No duplicate stories — if two items cover the same event, pick the stronger one
+
+ANTI-REDUNDANCY (strictly enforced):
+- Maximum 3 stories on the same geographic region (e.g. no more than 3 Middle East stories)
+- Maximum 3 stories involving the same country, conflict, or protagonist
+- Maximum 4 stories in the same category (e.g. no more than 4 World stories)
+- If multiple articles cover the same underlying event (same war, same election, same company), pick ONLY THE BEST ONE — discard the rest entirely
+- The 20 stories must span at least 5 distinct categories
+- The 20 stories must cover at least 6 distinct geographic regions or subject areas
+- Ask yourself: would a reader feel they got the full picture of the world today, or just one corner of it?
+
+QUALITY:
 - Each summary: maximum 200 words, active voice, editorial confidence — no hedging
-- If a reader profile is provided above, bias story selection and framing toward their stated interests
-- Cover diverse categories where possible
+- Headlines: specific and informative, not clickbait
+- If a reader profile is provided above, bias selection toward their interests — but never at the cost of diversity
 - Return ONLY valid JSON matching the schema. No markdown fences, no extra keys.`;
 
   const userPrompt = `Here are ${contentItems.length} articles. Select the 20 best and summarize them. Then add a closing quote.
@@ -504,8 +589,11 @@ Required JSON response:
         return null;
       }
 
-      // Image priority: Jina-extracted og:image → picsum fallback (seeded by URL)
-      const imageUrl = original.ogImage || fallbackImage(original.link.url);
+      // Image: use OG only if it passes validation, otherwise mark for generation
+      const ogValid = isValidOgImage(original.ogImage || null);
+      const imageUrl = ogValid
+        ? original.ogImage!
+        : `__GENERATE__:${s.title}:${s.category}`;
 
       return {
         id: randomUUID(),
@@ -522,6 +610,24 @@ Required JSON response:
 
   if (stories.length === 0) {
     throw new Error("AI returned 0 valid stories — check the OpenRouter response format");
+  }
+
+  // ── Step 7b: Generate images for stories with missing/invalid OG images ──
+  // Run in parallel (max 4 at once) — non-blocking on failure
+  const needsGeneration = stories.filter(s => s.imageUrl.startsWith("__GENERATE__:"));
+  console.log(`🖼️  ${stories.length - needsGeneration.length} valid OG images, ${needsGeneration.length} need generation`);
+
+  if (needsGeneration.length > 0) {
+    // Batch in groups of 4
+    for (let i = 0; i < needsGeneration.length; i += 4) {
+      const batch = needsGeneration.slice(i, i + 4);
+      await Promise.allSettled(batch.map(async (story) => {
+        const parts = story.imageUrl.replace("__GENERATE__:", "").split(":");
+        const title = parts.slice(0, -1).join(":");
+        const category = parts[parts.length - 1];
+        story.imageUrl = await generateStoryImage(title, category, apiKey);
+      }));
+    }
   }
 
   // ── Step 8: Persist digest ───────────────────────────────────────────────

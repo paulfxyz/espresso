@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.1.0-red?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-1.2.0-red?style=for-the-badge)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
 ![Node.js](https://img.shields.io/badge/Node.js-20+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
@@ -15,7 +15,7 @@
 **Your personal AI-powered morning news digest.**
 **Self-hosted. One API key. Inspired by The Economist Espresso.**
 
-🔴 **Live:** [news.paulfleury.com](https://news.paulfleury.com) · [paulflxyz-espresso.fly.dev](https://paulflxyz-espresso.fly.dev)
+🔴 **Live:** [app.cupof.news](https://app.cupof.news) · [cupof.news](https://cupof.news) · [app.cupof.news](https://app.cupof.news)
 
 </div>
 
@@ -192,7 +192,7 @@ A record of real problems found during development — useful if you fork this p
 ## 🚀 Quick Start
 
 ```bash
-git clone https://github.com/paulfxyz/espresso.git
+git clone https://github.com/paulfxyz/cup-of-news.git
 cd espresso
 npm install
 npm run dev
@@ -350,7 +350,7 @@ Full history: **[CHANGELOG.md](./CHANGELOG.md)**
 | **1.1.0** | 2026-03-23 | 20 stories per digest, full docs rewrite, line height improvements |
 | 0.5.2 | 2026-03-23 | Increased line heights |
 | 0.5.1 | 2026-03-23 | Quote card cleanup, logo text removed, bigger desktop type |
-| 0.5.0 | 2026-03-23 | Keyboard nav, mobile-first type scale, news.paulfleury.com |
+| 0.5.0 | 2026-03-23 | Keyboard nav, mobile-first type scale, app.cupof.news |
 | 0.4.0 | 2026-03-22 | Swipeable card reader, 25 RSS sources, auth fixes |
 | 0.3.0 | 2026-03-22 | Economist red/black/white redesign, admin auth |
 | 0.2.0 | 2026-03-22 | Full audit — 10 bugs fixed, all code documented |

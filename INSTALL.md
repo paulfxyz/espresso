@@ -518,4 +518,4 @@ Your `fly.toml` app name doesn't match the actual Fly app. Run `fly apps list` t
 
 ---
 
-*For bugs and feature requests: [github.com/paulfxyz/espresso/issues](https://github.com/paulfxyz/espresso/issues)*
+*For bugs and feature requests: [github.com/paulfxyz/cup-of-news/issues](https://github.com/paulfxyz/cup-of-news/issues)*

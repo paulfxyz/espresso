@@ -135,9 +135,6 @@ export default function DigestView() {
             <div className="w-8 h-8 bg-[#E3120B] flex items-center justify-center flex-shrink-0">
               <span className="text-white font-black text-sm font-display tracking-tight">E</span>
             </div>
-            <span className="font-black text-base font-display uppercase tracking-wide hidden sm:block">
-              Espresso
-            </span>
           </button>
 
           {/* Progress dots — centred, fills remaining space */}
@@ -261,7 +258,7 @@ export default function DigestView() {
 
 function StoryCard({ story, index, total }: { story: DigestStory; index: number; total: number }) {
   return (
-    <article className="max-w-2xl mx-auto w-full px-5 sm:px-8 py-7 sm:py-10">
+    <article className="max-w-2xl lg:max-w-3xl mx-auto w-full px-5 sm:px-8 lg:px-12 py-7 sm:py-10 lg:py-14">
 
       {/* Hero image */}
       {story.imageUrl && (
@@ -288,7 +285,7 @@ function StoryCard({ story, index, total }: { story: DigestStory; index: number;
       </div>
 
       {/* Headline — large and bold, mobile-first */}
-      <h1 className="text-3xl sm:text-4xl font-black font-display leading-tight tracking-tight mb-5">
+      <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black font-display leading-tight tracking-tight mb-5">
         {story.title}
       </h1>
 
@@ -296,7 +293,7 @@ function StoryCard({ story, index, total }: { story: DigestStory; index: number;
       <div className="w-10 h-0.5 bg-[#E3120B] mb-6" />
 
       {/* Summary — editorial serif, comfortable reading size on mobile */}
-      <p className="text-lg sm:text-xl font-editorial leading-[1.75] text-foreground/85">
+      <p className="text-lg sm:text-xl lg:text-2xl font-editorial leading-[1.8] text-foreground/85">
         {story.summary}
       </p>
 
@@ -321,29 +318,17 @@ function StoryCard({ story, index, total }: { story: DigestStory; index: number;
 function QuoteCard({ quote, author, date }: { quote: string; author: string; date: string }) {
   return (
     <div className="min-h-full flex items-center justify-center bg-foreground text-background px-6 py-16">
-      <div className="max-w-xl w-full text-center space-y-7">
-        <p className="text-[11px] uppercase tracking-[0.22em] opacity-40 font-ui">
-          {formatDate(date)} · Today's Thought
+      <div className="max-w-2xl w-full text-center space-y-10">
+        <p className="text-xs uppercase tracking-[0.22em] opacity-40 font-ui">
+          {formatDate(date)} · Today’s Thought
         </p>
-        <div className="w-8 h-0.5 bg-[#E3120B] mx-auto" />
-        <blockquote className="text-2xl sm:text-3xl font-editorial italic leading-relaxed font-medium">
-          "{quote}"
+        <div className="w-10 h-0.5 bg-[#E3120B] mx-auto" />
+        <blockquote className="text-3xl sm:text-4xl lg:text-5xl font-editorial italic leading-[1.4] font-medium">
+          “{quote}”
         </blockquote>
         {author && (
-          <p className="text-base opacity-55 font-ui">{author}</p>
+          <p className="text-lg sm:text-xl opacity-55 font-ui">{author}</p>
         )}
-        <div className="pt-2 flex items-center justify-center gap-4 text-xs opacity-35 font-ui">
-          <a href="/#/admin" className="hover:opacity-60 transition-opacity">Admin</a>
-          <span>·</span>
-          <a
-            href="https://www.perplexity.ai/computer"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:opacity-60 transition-opacity"
-          >
-            Built with Perplexity Computer
-          </a>
-        </div>
       </div>
     </div>
   );
@@ -457,7 +442,7 @@ function EmptyView() {
             <div className="w-8 h-8 bg-[#E3120B] flex items-center justify-center">
               <span className="text-white font-black text-sm font-display">E</span>
             </div>
-            <span className="font-black text-base font-display uppercase">Espresso</span>
+
           </div>
           <button onClick={toggle} className="w-9 h-9 flex items-center justify-center hover:bg-accent rounded transition-colors">
             {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}

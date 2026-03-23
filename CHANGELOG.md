@@ -1,3 +1,31 @@
+## [2.2.0-landing] — 2026-03-23
+
+**Landing page: native-quality French and German rewrites.**
+
+The previous FR/DE translations were machine-translated from English.
+Key problems fixed in French:
+- "histoires curées" → "articles sélectionnés" (journalism term, not museum)
+- "alimentez-le de vos sources" → "ajoutez vos sources favorites" (natural French)
+- "sans être submergé" → "sans vous noyer dans l'info" (idiomatic)
+- "circumvolutions" → "pas de langue de bois" (correct journalism idiom)
+- "curé par l'IA" → "sélectionné et rédigé par l'IA" (correct term)
+- "Alimentez. Dormez. Lisez." → "Choisissez. Dormez. Lisez." (snappier)
+- "Un briefing qui vaut le lever." → "Un briefing qui vaut le réveil." (natural)
+- Feature titles: "Diversité géographique garantie", "Des résumés éditoriaux",
+  "Votre consigne éditoriale" (not "prompt" in French UI copy)
+
+German improvements:
+- "Geschichten" → "Nachrichten/Themen" (news, not tales/stories)
+- "obligatorische globale Vielfalt" → "garantierte Vielfalt weltweit" (less bureaucratic)
+- "Keine Floskeln" instead of "Kein Absichern" (correct idiom)
+- "20 ausgewählte Themen" instead of "20 kuratierte Geschichten"
+- "So funktioniert's" instead of "So funktioniert es" (natural spoken German)
+
+Also updated EN/FR/DE for 3-edition model: "3 World Editions",
+new edition descriptions, updated step 6 text.
+
+---
+
 ## [2.2.0] — 2026-03-23
 
 **3 editions (EN/FR/DE). Fixed incoherent sources. Stronger geographic diversity.**

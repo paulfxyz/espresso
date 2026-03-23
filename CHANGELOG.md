@@ -18,6 +18,81 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [2.1.0] — 2026-03-23
+
+**Full language localisation, image quality layer, admin fix, digest history.**
+
+### Engineering notes
+
+**Bug: French and German editions were generating in English.**
+The `aiLanguageInstruction` and `aiRegionalFocus` fields from `shared/editions.ts`
+were never injected into the pipeline system prompt. The editions registry had all
+the right instructions — they were simply never used. The system prompt was a
+hardcoded English template from v1.x that was never updated for v2.0.0 editions.
+
+Fix: language block now injected as the FIRST section of the system prompt,
+before diversity rules. Reason: LLMs follow early instructions better than
+late ones. "Write in French" buried at position 600 in a 700-token prompt
+gets ignored. At position 10, it's the primary constraint on output format.
+
+Dual-language reinforcement: `"Write in French (Écrivez en français)"` —
+English ensures the model parses the instruction; native-language phrase
+activates native-language generation pathways. Testing showed this combination
+is significantly more reliable than either alone.
+
+Field-by-field enumeration: early tests had French summaries with English
+titles, or mixed-language closingQuote. Listing every JSON field explicitly
+closes those gaps completely.
+
+**Bug: Admin panel frozen on first load.**
+The login button had `disabled={loading || !password}` — the field started
+empty, so the button was permanently disabled. The placeholder text showed
+"admin" but that's a placeholder, not a value. Clicking Enter did nothing.
+Fix: `disabled={loading}` only. Empty submission uses "admin" as default
+(already implemented in handleLogin as `key = password.trim() || "admin"`).
+
+**Feature: Reader UI localises when edition changes.**
+Added `ui` object to every Edition definition with translated strings for:
+"Read sources", "Prev", "Next", "All Stories", "Today's Thought", empty state,
+and fallback notice. These flow through DigestView → StoryCard → SourcesStoryModal.
+Switching from en-WORLD to fr-FR now changes both the content AND the interface.
+
+**Feature: Digest generation always creates new entry.**
+Previous behaviour: `updateDigest()` silently replaced any existing DRAFT for
+today. Regenerating lost the previous version. New behaviour: always INSERT.
+Multiple drafts per day per edition are fine. The reader shows the latest
+published digest. Admin can see all versions and choose which to publish.
+
+**Feature: Unsplash image quality layer.**
+Added a third tier to the image fallback chain:
+  Tier 1: Jina Reader og:image header (unchanged)
+  Tier 2: Direct HTML Range fetch, og:image + twitter:image (unchanged)
+  Tier 3: Unsplash keyword search — NEW. Extracts 4 meaningful words from
+           the story title (stripping stop words), searches Unsplash for a
+           landscape editorial photo. Returns the first high-quality result.
+  Tier 4: Category SVG fallback (unchanged, always available)
+
+Requires `UNSPLASH_ACCESS_KEY` env var (free at unsplash.com/developers).
+Silently skipped if not configured — no crash, no degradation.
+
+Query construction: "US and Iran trade threats over nuclear programme" →
+strips stop words ["and", "over"] → "Iran trade threats nuclear". This
+produces more accurate imagery than passing the full headline.
+
+### ✨ Added
+- **Reader UI localisation**: all interface strings change with edition language
+- **Unsplash image search**: 3rd-tier fallback for editorial photos
+- **Digest history**: always create new entry, never overwrite
+- **v3.0 roadmap**: friend networks, disinformation detection, multi-model ensemble
+
+### ✨ Fixed
+- **Admin panel freeze**: login button now enabled with empty field (uses 'admin' default)
+- **FR/DE language**: `aiLanguageInstruction` now injected first in system prompt
+- **Edition prompt not used**: language, regional focus, and sport slots all injected
+- **UI not localised**: Prev/Next/Read sources/etc. now translate with edition
+
+---
+
 ## [2.0.3] — 2026-03-23
 
 **The multi-edition blocker: SQLite UNIQUE constraint prevented generating any edition except en-WORLD.**

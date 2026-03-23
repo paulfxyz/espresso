@@ -1,7 +1,7 @@
 /**
  * @file shared/editions.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 2.0.3
+ * @version 2.1.0
  *
  * Cup of News — Edition Registry
  *
@@ -93,6 +93,25 @@ export interface Edition {
   description: string;
 
   /**
+   * UI strings for the reader interface in this edition's language.
+   * Used to localise navigation, labels, and CTAs in DigestView.
+   * Kept minimal — only strings visible in the reader, not the admin panel.
+   */
+  ui: {
+    readSources: string;      // "Read sources" button
+    showingSince: string;     // "x of y"
+    closingThought: string;   // "Today's Thought"
+    noDigestYet: string;      // empty state headline
+    noDigestSub: string;      // empty state subtext
+    fallbackNotice: string;   // when showing cross-edition fallback
+    generateLink: string;     // "Generate →" in fallback banner
+    prevStory: string;        // "Prev" nav button
+    nextStory: string;        // "Next" nav button
+    allStories: string;       // grid overlay title
+    closingQuoteOf: string;   // "Closing Thought"
+  };
+
+  /**
    * Language instruction injected into the AI system prompt.
    * Should be in BOTH English (so the model understands) AND the target language
    * (to reinforce the instruction).
@@ -127,6 +146,19 @@ export const EDITIONS: Edition[] = [
     description: "Global English edition — 20 stories from around the world",
     aiLanguageInstruction: "Write all titles and summaries in English.",
     aiRegionalFocus: "Provide balanced global coverage. No single region should dominate.",
+    ui: {
+      readSources: "Read sources",
+      showingSince: "of",
+      closingThought: "Today's Thought",
+      noDigestYet: "No digest yet",
+      noDigestSub: "Generate and publish a digest from the admin panel to start reading.",
+      fallbackNotice: "not generated yet — showing latest available edition.",
+      generateLink: "Generate →",
+      prevStory: "Prev",
+      nextStory: "Next",
+      allStories: "All Stories",
+      closingQuoteOf: "Closing Thought",
+    },
     categories: {
       Technology: "Technology", Science: "Science", Business: "Business",
       Politics: "Politics", World: "World", Culture: "Culture",
@@ -145,6 +177,19 @@ export const EDITIONS: Edition[] = [
     aiLanguageInstruction: "Write all titles and summaries in American English.",
     aiRegionalFocus:
       "Prioritise stories with US relevance: American politics, US economy, Silicon Valley tech, US sports (NFL, NBA, MLB, MLS), US foreign policy. Still maintain global breadth — at least 8 stories from outside the US.",
+    ui: {
+      readSources: "Read sources",
+      showingSince: "of",
+      closingThought: "Today's Thought",
+      noDigestYet: "No digest yet",
+      noDigestSub: "Generate and publish a digest from the admin panel to start reading.",
+      fallbackNotice: "not generated yet — showing latest available edition.",
+      generateLink: "Generate →",
+      prevStory: "Prev",
+      nextStory: "Next",
+      allStories: "All Stories",
+      closingQuoteOf: "Closing Thought",
+    },
     categories: {
       Technology: "Technology", Science: "Science", Business: "Business",
       Politics: "Politics", World: "World", Culture: "Culture",
@@ -163,6 +208,19 @@ export const EDITIONS: Edition[] = [
     aiLanguageInstruction: "Write all titles and summaries in Canadian English.",
     aiRegionalFocus:
       "Prioritise stories relevant to Canada: Canadian politics, the Canadian economy (energy, housing, trade with US), Canadian sports (NHL, CFL, Canadian Olympic athletes), Canadian-US relations. Include strong global coverage — at least 8 non-North-American stories.",
+    ui: {
+      readSources: "Read sources",
+      showingSince: "of",
+      closingThought: "Today's Thought",
+      noDigestYet: "No digest yet",
+      noDigestSub: "Generate and publish a digest from the admin panel to start reading.",
+      fallbackNotice: "not generated yet — showing latest available edition.",
+      generateLink: "Generate →",
+      prevStory: "Prev",
+      nextStory: "Next",
+      allStories: "All Stories",
+      closingQuoteOf: "Closing Thought",
+    },
     categories: {
       Technology: "Technology", Science: "Science", Business: "Business",
       Politics: "Politics", World: "World", Culture: "Culture",
@@ -182,6 +240,19 @@ export const EDITIONS: Edition[] = [
       "IMPORTANT: Write ALL titles and summaries in FRENCH (français). This is a French-Canadian edition. Use Quebec French conventions where appropriate. All text must be in French — no English titles or summaries.",
     aiRegionalFocus:
       "Prioritise stories relevant to French Canada: Quebec politics and culture, Canadian-French relations, francophone Canada, the Canadian economy and US-Canada trade, hockey (NHL) as the primary sport. Include strong international francophone coverage (France, Belgium, Senegal, Morocco). At least 6 stories from outside North America.",
+    ui: {
+      readSources: "Lire les sources",
+      showingSince: "sur",
+      closingThought: "Pensée du jour",
+      noDigestYet: "Aucun digest disponible",
+      noDigestSub: "Générez et publiez un digest depuis le panneau d'administration pour commencer à lire.",
+      fallbackNotice: "pas encore généré — affichage de la dernière édition disponible.",
+      generateLink: "Générer →",
+      prevStory: "Préc.",
+      nextStory: "Suiv.",
+      allStories: "Toutes les actualités",
+      closingQuoteOf: "Pensée de clôture",
+    },
     categories: {
       Technology: "Technologie", Science: "Science", Business: "Économie",
       Politics: "Politique", World: "Monde", Culture: "Culture",
@@ -200,6 +271,19 @@ export const EDITIONS: Edition[] = [
     aiLanguageInstruction: "Write all titles and summaries in British English (use -ise, -our spellings).",
     aiRegionalFocus:
       "Prioritise stories relevant to British readers: UK politics (Parliament, PM, parties), the British economy, UK-EU relations post-Brexit, Premier League and British sports (cricket, rugby, Formula 1), Commonwealth affairs. Maintain strong global coverage — at least 8 non-UK stories.",
+    ui: {
+      readSources: "Read sources",
+      showingSince: "of",
+      closingThought: "Today's Thought",
+      noDigestYet: "No digest yet",
+      noDigestSub: "Generate and publish a digest from the admin panel to start reading.",
+      fallbackNotice: "not generated yet — showing latest available edition.",
+      generateLink: "Generate →",
+      prevStory: "Prev",
+      nextStory: "Next",
+      allStories: "All Stories",
+      closingQuoteOf: "Closing Thought",
+    },
     categories: {
       Technology: "Technology", Science: "Science", Business: "Business",
       Politics: "Politics", World: "World", Culture: "Culture",
@@ -219,6 +303,19 @@ export const EDITIONS: Edition[] = [
       "IMPORTANT: Write ALL titles and summaries in FRENCH (français). This is a French edition for French readers. Use standard French (not Quebec). All text must be in French — including category names, headlines, and summaries. Never write in English.",
     aiRegionalFocus:
       "Prioritise stories relevant to French readers: French politics (Élysée, Assemblée nationale, partis), the French economy (CAC 40, industrie française, PME), European Union politics (since France is central to EU), French culture (cinéma, littérature, gastronomie), football (Ligue 1, équipe de France, Champions League), francophone Africa. Still include 8+ international stories for global coverage.",
+    ui: {
+      readSources: "Lire les sources",
+      showingSince: "sur",
+      closingThought: "Pensée du jour",
+      noDigestYet: "Aucun digest disponible",
+      noDigestSub: "Générez et publiez un digest depuis le panneau d'administration pour commencer à lire.",
+      fallbackNotice: "pas encore généré — affichage de la dernière édition disponible.",
+      generateLink: "Générer →",
+      prevStory: "Préc.",
+      nextStory: "Suiv.",
+      allStories: "Toutes les actualités",
+      closingQuoteOf: "Pensée de clôture",
+    },
     categories: {
       Technology: "Technologie", Science: "Science", Business: "Économie",
       Politics: "Politique", World: "Monde", Culture: "Culture",
@@ -238,6 +335,19 @@ export const EDITIONS: Edition[] = [
       "WICHTIG: Schreibe ALLE Titel und Zusammenfassungen auf DEUTSCH. Dies ist eine deutsche Ausgabe für deutschsprachige Leser. Alle Texte müssen auf Deutsch sein — einschließlich Kategorienamen, Schlagzeilen und Zusammenfassungen. Niemals auf Englisch schreiben.",
     aiRegionalFocus:
       "Prioritise stories relevant to German readers: German politics (Bundestag, Bundesregierung, Parteien), the German economy (DAX, Automobilindustrie, Mittelstand, Energiewende), EU politics (Germany as central EU actor), DACH region (Austria, Switzerland), German sports (Bundesliga, DFB-Elf, Formel 1). Include at least 8 international stories for global coverage. Sports must include Bundesliga/German football.",
+    ui: {
+      readSources: "Quellen lesen",
+      showingSince: "von",
+      closingThought: "Gedanke des Tages",
+      noDigestYet: "Noch kein Digest",
+      noDigestSub: "Erstellen und veröffentlichen Sie einen Digest über das Admin-Panel, um mit dem Lesen zu beginnen.",
+      fallbackNotice: "noch nicht generiert — zeige neueste verfügbare Ausgabe.",
+      generateLink: "Generieren →",
+      prevStory: "Vorh.",
+      nextStory: "Näch.",
+      allStories: "Alle Nachrichten",
+      closingQuoteOf: "Abschlusszitat",
+    },
     categories: {
       Technology: "Technologie", Science: "Wissenschaft", Business: "Wirtschaft",
       Politics: "Politik", World: "Welt", Culture: "Kultur",
@@ -256,6 +366,19 @@ export const EDITIONS: Edition[] = [
     aiLanguageInstruction: "Write all titles and summaries in Australian English.",
     aiRegionalFocus:
       "Prioritise stories relevant to Australian readers: Australian politics (Parliament, PM, major parties), the Australian economy (mining, housing, China trade), Asia-Pacific region (China, Japan, SE Asia, Pacific Islands), Australian sports (AFL, NRL, cricket, tennis, swimming). Strong Asia coverage since Australia is geographically in the Asia-Pacific. Include 6+ non-Australian stories.",
+    ui: {
+      readSources: "Read sources",
+      showingSince: "of",
+      closingThought: "Today's Thought",
+      noDigestYet: "No digest yet",
+      noDigestSub: "Generate and publish a digest from the admin panel to start reading.",
+      fallbackNotice: "not generated yet — showing latest available edition.",
+      generateLink: "Generate →",
+      prevStory: "Prev",
+      nextStory: "Next",
+      allStories: "All Stories",
+      closingQuoteOf: "Closing Thought",
+    },
     categories: {
       Technology: "Technology", Science: "Science", Business: "Business",
       Politics: "Politics", World: "World", Culture: "Culture",

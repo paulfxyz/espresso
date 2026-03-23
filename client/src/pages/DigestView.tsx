@@ -163,7 +163,7 @@ export default function DigestView() {
   };
 
   if (isLoading) return <LoadingView />;
-  if (!digest)   return <EmptyView />;
+  if (!digest)   return <EmptyView edition={edition} />;
 
   const story = isQuoteCard ? null : digest.stories[cardIndex];
 
@@ -185,13 +185,13 @@ export default function DigestView() {
         <div className="flex-shrink-0 bg-muted/50 border-b border-border/60 px-4 py-2 flex items-center justify-between gap-3">
           <p className="text-[11px] text-muted-foreground font-ui leading-tight">
             <span className="text-foreground font-bold">{edition.flag} {edition.name}</span>
-            {" — not generated yet. Showing latest available edition."}
+            {" — " + edition.ui.fallbackNotice}
           </p>
           <a
             href="/#/admin"
             className="text-[11px] font-bold font-ui text-[#E3120B] hover:underline flex-shrink-0 whitespace-nowrap"
           >
-            Generate →
+            {edition.ui.generateLink}
           </a>
         </div>
       )}
@@ -267,15 +267,16 @@ export default function DigestView() {
           activeIndex={cardIndex}
           onSelect={i => { setCardIndex(i); setShowGrid(false); }}
           onClose={() => setShowGrid(false)}
+          edition={edition}
         />
       )}
 
       {/* ── Card area ───────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
         {isQuoteCard
-          ? <QuoteCard quote={digest.closingQuote} author={digest.closingQuoteAuthor} date={digest.date} />
+          ? <QuoteCard quote={digest.closingQuote} author={digest.closingQuoteAuthor} date={digest.date} label={edition.ui.closingThought} />
           : story
-          ? <StoryCard story={story} index={cardIndex} total={digest.stories.length} />
+          ? <StoryCard story={story} index={cardIndex} total={digest.stories.length} edition={edition} />
           : null
         }
       </div>
@@ -294,7 +295,7 @@ export default function DigestView() {
             aria-label="Previous story"
           >
             <ChevronLeft size={20} />
-            <span className="hidden sm:block">Prev</span>
+            <span className="hidden sm:block">{edition.ui.prevStory}</span>
           </button>
 
           {/* Counter */}
@@ -314,7 +315,7 @@ export default function DigestView() {
             data-testid="next-story"
             aria-label="Next story"
           >
-            <span className="hidden sm:block">Next</span>
+            <span className="hidden sm:block">{edition.ui.nextStory}</span>
             <ChevronRight size={20} />
           </button>
         </div>
@@ -325,7 +326,7 @@ export default function DigestView() {
 
 // ─── Story Source Modal ─────────────────────────────────────────────────────────
 
-function SourcesStoryModal({ story }: { story: DigestStory }) {
+function SourcesStoryModal({ story, readSourcesLabel = "Read sources" }: { story: DigestStory; readSourcesLabel?: string }) {
   const [open, setOpen] = useState(false);
   const domain = (() => { try { return new URL(story.sourceUrl).hostname.replace("www.", ""); } catch { return story.sourceUrl; } })();
 
@@ -336,7 +337,7 @@ function SourcesStoryModal({ story }: { story: DigestStory }) {
         className="inline-flex items-center gap-2 mt-8 text-sm font-bold font-ui text-[#E3120B] hover:underline underline-offset-2"
         data-testid="read-sources-btn"
       >
-        <Rss size={13} /> Read sources
+        <Rss size={13} /> {readSourcesLabel}
       </button>
 
       {open && (
@@ -411,7 +412,7 @@ function SourcesStoryModal({ story }: { story: DigestStory }) {
 // ─── Story Card ───────────────────────────────────────────────────────────────
 // Mobile-first: big type, generous padding, image above the fold
 
-function StoryCard({ story, index, total }: { story: DigestStory; index: number; total: number }) {
+function StoryCard({ story, index, total, edition }: { story: DigestStory; index: number; total: number; edition: any }) {
   return (
     <article className="max-w-2xl lg:max-w-3xl mx-auto w-full px-4 sm:px-8 lg:px-12 py-5 sm:py-8 lg:py-14">
       {/* px: 4 mobile (tight but readable) → 8 sm → 12 lg
@@ -465,7 +466,7 @@ function StoryCard({ story, index, total }: { story: DigestStory; index: number;
       </p>
 
       {/* Sources — opens modal with source details */}
-      <SourcesStoryModal story={story} />
+      <SourcesStoryModal story={story} readSourcesLabel={edition?.ui?.readSources ?? "Read sources"} />
 
     </article>
   );
@@ -473,7 +474,7 @@ function StoryCard({ story, index, total }: { story: DigestStory; index: number;
 
 // ─── Quote Card ───────────────────────────────────────────────────────────────
 
-function QuoteCard({ quote, author, date }: { quote: string; author: string; date: string }) {
+function QuoteCard({ quote, author, date, label = "Today's Thought" }: { quote: string; author: string; date: string; label?: string }) {
   return (
     <div className="min-h-full flex items-center justify-center bg-foreground text-background px-6 py-16">
       <div className="max-w-2xl w-full text-center space-y-10">
@@ -504,6 +505,7 @@ function GridOverlay({
   activeIndex: number;
   onSelect: (i: number) => void;
   onClose: () => void;
+  edition: any;
 }) {
   return (
     <div className="fixed inset-0 z-50 bg-background/97 backdrop-blur-sm overflow-y-auto">
@@ -511,7 +513,7 @@ function GridOverlay({
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h2 className="font-black text-lg font-display uppercase tracking-wide">All Stories</h2>
+            <h2 className="font-black text-lg font-display uppercase tracking-wide">{edition.ui.allStories}</h2>
             <p className="text-sm text-muted-foreground font-ui mt-0.5">{formatDate(digest.date)}</p>
           </div>
           <button
@@ -589,7 +591,7 @@ function LoadingView() {
   );
 }
 
-function EmptyView() {
+function EmptyView({ edition }: { edition: any }) {
   const { toggle, theme } = useTheme();
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -612,9 +614,9 @@ function EmptyView() {
           <div className="w-14 h-14 bg-[#E3120B] mx-auto flex items-center justify-center">
             <span className="text-white font-black text-2xl font-display">C</span>
           </div>
-          <h2 className="text-2xl font-black font-display">No digest yet</h2>
+          <h2 className="text-2xl font-black font-display">{edition.ui.noDigestYet}</h2>
           <p className="text-base text-muted-foreground font-editorial leading-[1.9]">
-            Submit links, generate a digest, and publish it to start reading.
+            {edition.ui.noDigestSub}
           </p>
   
         </div>

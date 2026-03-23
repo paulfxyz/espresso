@@ -191,7 +191,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (key: string) => void }) {
 
             <button
               type="submit"
-              disabled={loading || !password}
+              disabled={loading}
               data-testid="login-submit"
               className="w-full py-2.5 bg-[#E3120B] text-white text-sm font-bold hover:bg-[#B50D08] transition-colors disabled:opacity-40 font-ui uppercase tracking-wider"
             >

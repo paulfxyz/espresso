@@ -1,7 +1,7 @@
 /**
  * @file server/pipeline.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 2.0.3
+ * @version 2.1.0
  *
  * Cup of News — Daily Digest Generation Pipeline
  *
@@ -199,6 +199,82 @@ async function fetchOgImageDirect(url: string): Promise<string | null> {
     return null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * fetchUnsplashImage — search Unsplash for a high-quality editorial photo.
+ *
+ * v2.1.0: Added as an image quality layer between OG image extraction and
+ * the SVG fallback. When Jina + direct HTML fetch both fail to find a usable
+ * OG image, we search Unsplash by the story's title keywords before falling
+ * back to a generated SVG.
+ *
+ * WHY UNSPLASH OVER OTHER SOURCES:
+ *   - Free API, no rate limits for low-volume use (50 req/hour on demo key)
+ *   - High-quality editorial photography
+ *   - Safe licensing (Unsplash License — free for editorial use)
+ *   - Returns reliable HTTPS URLs that pass isValidOgImage()
+ *
+ * QUERY CONSTRUCTION:
+ *   We extract the first 4-5 meaningful words from the story title (skipping
+ *   stop words) to build a focused search query. "US and Iran trade threats
+ *   over nuclear programme" → "Iran nuclear programme threats".
+ *   This produces more relevant imagery than the full headline.
+ *
+ * FALLBACK CHAIN (complete):
+ *   1. Jina Reader og:image header
+ *   2. Direct HTML Range fetch (og:image / twitter:image meta tags)
+ *   3. Unsplash keyword search ← NEW in v2.1.0
+ *   4. Category SVG (always available, always correct)
+ *
+ * NOTE: UNSPLASH_ACCESS_KEY env var required. If not set, this step is skipped
+ * silently and we fall through to SVG. No crash, no error.
+ */
+async function fetchUnsplashImage(title: string, category: string): Promise<string | null> {
+  const accessKey = process.env.UNSPLASH_ACCESS_KEY;
+  if (!accessKey) return null; // Silently skip if not configured
+
+  // Build focused query: strip stop words, take first 4 content words
+  const stopWords = new Set([
+    "a","an","the","and","or","but","in","on","at","to","for","of","with",
+    "by","from","up","as","is","it","its","this","that","was","are","be",
+    "has","had","have","will","would","could","should","may","might","over",
+    "than","then","so","if","when","where","how","what","who","why","says",
+    "said","after","before","amid","as","amid","amid","us","un","eu",
+  ]);
+
+  const words = title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .split(/\s+/)
+    .filter(w => w.length > 3 && !stopWords.has(w))
+    .slice(0, 4);
+
+  // Fall back to category if title yields nothing useful
+  const query = words.length >= 2 ? words.join(" ") : category;
+
+  try {
+    const url = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=3&orientation=landscape&content_filter=high`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Client-ID ${accessKey}`,
+        "Accept-Version": "v1",
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json() as { results: Array<{ urls: { regular: string } }> };
+    const photo = data.results?.[0]?.urls?.regular;
+
+    if (photo && isValidOgImage(photo)) {
+      return photo;
+    }
+    return null;
+  } catch {
+    return null; // Never crash the pipeline over a missing image
   }
 }
 
@@ -559,12 +635,61 @@ export async function runDailyPipeline(
   // it tells the AI *who you are* and *what you care about*, so it can
   // select and frame stories through your specific lens.
   const editorialSection = editorialPrompt.trim()
-    ? `\n\nREADER PROFILE & EDITORIAL LENS (high priority — let this guide your selection and tone):\n${editorialPrompt.trim()}`
+    ? `\n\nREADER PROFILE & EDITORIAL LENS (high priority — let this shape selection and tone):\n${editorialPrompt.trim()}`
     : "";
 
-  const systemPrompt = `You are the editorial AI for "Cup of News" — a curated morning news digest inspired by The Economist Espresso. Your writing is intelligent, slightly opinionated, and respects the reader's time.
+  // ── v2.1.0: Language + regional injection ──────────────────────────────────
+  //
+  // WHY LANGUAGE INSTRUCTION COMES FIRST:
+  //   Gemini 2.5 Pro (and all LLMs) follow early-prompt instructions more
+  //   reliably than late-prompt ones. If language is buried at the end of a
+  //   600-token system prompt, the model often defaults to English.
+  //   Solution: language constraint appears in the FIRST paragraph.
+  //
+  // DUAL-LANGUAGE REINFORCEMENT:
+  //   "Write in French (Écrivez en français)" outperforms either alone.
+  //   English ensures the model parses the instruction; native-language
+  //   reinforcement activates the model's native-language generation pathways.
+  //
+  // EXPLICIT FIELD-BY-FIELD ENUMERATION:
+  //   Early versions said "write in French" but the model would write
+  //   summaries in French while leaving titles in English (or vice versa).
+  //   Listing each JSON field explicitly closes that gap.
+  const isNonEnglish = edition.language !== "en";
+  const categoryValues = Object.values(edition.categories).join(" | ");
 
-Your task: from the provided list of articles, select exactly 20 that together form the best morning briefing. Prioritize newsworthiness, recency, diversity of topics, and global relevance.${editorialSection}
+  const languageBlock = isNonEnglish ? `
+⚠️  LANGUAGE — THE SINGLE MOST IMPORTANT RULE IN THIS ENTIRE PROMPT:
+${edition.aiLanguageInstruction}
+
+YOU MUST write EVERY output field in ${edition.languageName}:
+• "title"              → in ${edition.languageName}
+• "summary"            → in ${edition.languageName}
+• "closingQuote"       → in ${edition.languageName}
+• "closingQuoteAuthor" → keep the person's name, add role in ${edition.languageName}
+• "category"           → EXACTLY one of: ${categoryValues}
+
+❌ DO NOT write any field in English. Zero English words in titles or summaries.
+✅ This is the ${edition.name} edition. Readers expect ${edition.languageName}.
+` : "";
+
+  const regionalBlock = `🌍 EDITION: ${edition.flag} ${edition.name} (${editionId})
+REGIONAL FOCUS: ${edition.aiRegionalFocus}`;
+
+  const sportSlot = edition.id.startsWith("fr")
+    ? "football (Ligue 1, Champions League), rugby, tennis, cyclisme"
+    : edition.id === "de-DE"
+    ? "Bundesliga, DFB-Nationalmannschaft, Formel 1, Tennis, Handball"
+    : edition.id === "en-AU"
+    ? "AFL, NRL, cricket, tennis, swimming"
+    : edition.id === "en-GB"
+    ? "Premier League, cricket, rugby union, Formula 1"
+    : "any major sport (football, tennis, F1, athletics, basketball)";
+
+  const systemPrompt = `You are the editorial AI for "Cup of News" — a curated morning news digest inspired by The Economist Espresso. Your writing is intelligent, slightly opinionated, and respects the reader's time.
+${languageBlock}
+${regionalBlock}
+${editorialSection}
 
 EDITORIAL MANDATE — BREADTH IS NON-NEGOTIABLE:
 You are the editor of a world briefing read at breakfast. A reader should finish feeling they understand TODAY'S WORLD — not just one corner of it.
@@ -579,7 +704,7 @@ HARD LIMITS — breaking any of these means the digest has FAILED:
 MANDATORY SLOTS — your 20 stories MUST include ALL of the following:
 ✦ AT LEAST 2 Technology or Science stories (AI breakthroughs, medical research, space, climate tech)
 ✦ AT LEAST 2 Business or Economics stories (markets, M&A, central banks, trade, earnings)
-✦ AT LEAST 2 Sports stories (football, tennis, F1, athletics, basketball — any sport)
+✦ AT LEAST 2 Sports stories — specifically: ${sportSlot}
 ✦ AT LEAST 1 Culture story (film, music, art, books, fashion, architecture)
 ✦ AT LEAST 1 Health or Environment story (medicine, climate change, nature, food systems)
 ✦ AT LEAST 1 story from SUB-SAHARAN AFRICA (not North Africa / Middle East)
@@ -589,11 +714,11 @@ MANDATORY SLOTS — your 20 stories MUST include ALL of the following:
 ✦ NO MORE THAN 3 stories from the Middle East/Iran/Israel/Gaza conflict zone
 
 BEFORE FINALISING: count your stories per category and region. If you're short on a mandatory slot, REMOVE a story from an over-represented area and replace it.
-- No more than 2 stories from any single country
 
 QUALITY:
 - Each summary: maximum 200 words, active voice, editorial confidence — no hedging
 - Headlines: specific and informative, not clickbait
+- ALL OUTPUT TEXT MUST BE IN ${edition.languageName.toUpperCase()} — this is the ${edition.name} edition
 - Imagine a reader who wants to feel informed about the whole world over breakfast — not exhausted by one topic
 - If a reader profile is provided above, honour their interests — but NEVER at the cost of geographic and topical breadth
 - Return ONLY valid JSON matching the schema. No markdown fences, no extra keys.`;
@@ -709,17 +834,43 @@ IMPORTANT: For additionalIdxs — if multiple articles in the list cover the SAM
   console.log(`🖼️  ${stories.length - needsGeneration.length} valid OG images, ${needsGeneration.length} need generation`);
 
   if (needsGeneration.length > 0) {
-    // Generate category-styled SVG images synchronously (instant, no API call)
+    console.log(`🖼️  Attempting Unsplash search for ${needsGeneration.length} stories without OG images…`);
+
+    // v2.1.0: Three-tier image fallback before SVG
+    // Tier 1+2 already ran (Jina OG + direct HTML fetch) during extraction.
+    // Tier 3: Unsplash keyword search — real editorial photos when OG fails.
+    // Tier 4: Category SVG — guaranteed fallback, always visually correct.
     for (const story of needsGeneration) {
       const parts = story.imageUrl.replace("__GENERATE__:", "").split(":");
       const category = parts[parts.length - 1];
       const title = parts.slice(0, -1).join(":");
-      story.imageUrl = generateCategoryImage(title, category);
+
+      // Try Unsplash first (skipped silently if UNSPLASH_ACCESS_KEY not set)
+      const unsplashUrl = await fetchUnsplashImage(title, category);
+      if (unsplashUrl) {
+        story.imageUrl = unsplashUrl;
+        console.log(`  ✅ Unsplash: "${title.slice(0, 40)}…"`);
+      } else {
+        // Final fallback: deterministic SVG — zero cost, always on-brand
+        story.imageUrl = generateCategoryImage(title, category);
+      }
     }
   }
 
   // ── Step 8: Persist digest ───────────────────────────────────────────────
 
+  // ── Persist digest (upsert for drafts, block for published) ───────────────
+  //
+  // BEHAVIOUR:
+  //   - PUBLISHED exists  → blocked above (409). Unpublish first.
+  //   - DRAFT exists      → overwrite with new content (safe to regenerate)
+  //   - Nothing exists    → create new row
+  //
+  // WHY NOT "always create new":
+  //   UNIQUE(date, edition) prevents multiple rows for the same day+edition.
+  //   The user's intent ("don't replace") applies to PUBLISHED digests only.
+  //   Drafts are work-in-progress — overwriting is the correct behaviour.
+  //   Published digests are never touched — they accumulate in history.
   const digestData = {
     date: today,
     status: "draft" as const,
@@ -731,6 +882,7 @@ IMPORTANT: For additionalIdxs — if multiple articles in the list cover the SAM
     edition: editionId,
   };
 
+  // Upsert: update draft if exists, create if not
   const digest = existing
     ? storage.updateDigest(existing.id, digestData)
     : storage.createDigest(digestData);

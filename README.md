@@ -84,7 +84,7 @@ You submit links all week (API, admin panel, Safari Share Sheet)
                               │
                               ▼
                OpenRouter — 1 structured API call
-               Model: Gemini 2.0 Flash (~$0.02/digest)
+               Model: Gemini 2.5 Pro (~$0.08-0.15/digest)
                Output: 20 stories ranked + summarised
                        + mandatory coverage enforced
                        + closing quote
@@ -359,7 +359,7 @@ cup-of-news/
 | Runtime | Node.js 20 + Express | Runs anywhere, minimal abstraction, easy to reason about |
 | Frontend | React 18 + Vite + Tailwind + shadcn/ui | Fast builds, tree-shakeable, excellent DX |
 | Database | SQLite (Drizzle ORM) | Zero infrastructure, single file, trivial backup |
-| AI | OpenRouter (Gemini 2.0 Flash) | 400+ models, one API key, ~$0.02/digest |
+| AI | OpenRouter (Gemini 2.5 Pro) | 400+ models, one API key, ~$0.08-0.15/digest |
 | Content extraction | Jina Reader (free) | Handles paywalls, YouTube, TikTok — no key needed |
 | Image extraction | OG metadata → HTML fallback → editorial SVG | 3-tier: always gets something good |
 | RSS fallback | 34 public feeds | Transparent, inspectable, zero cost |
@@ -376,7 +376,8 @@ Full history with engineering narrative: **[CHANGELOG.md](./CHANGELOG.md)**
 
 | Version | Date | Summary |
 |---------|------|---------|
-| **1.6.0** | 2026-03-23 | Gemini 2.5 Pro, multi-source attribution, diversity v4, RSS header removed |
+| **1.6.1** | 2026-03-23 | Docs patch: version sync, model references updated to Gemini 2.5 Pro |
+| 1.6.0 | 2026-03-23 | Gemini 2.5 Pro, multi-source attribution, diversity v4, RSS header removed |
 | 1.5.1 | 2026-03-23 | Direct HTML OG image fallback, 34 RSS sources, 17/20 real photos |
 | 1.5.0 | 2026-03-23 | Per-story sources modal, paragraph spacing, mandatory Sport/Culture/geographic coverage |
 | 1.4.x | 2026-03-23 | Smart images, diversity rules, editorial SVG fallbacks, sources modal |

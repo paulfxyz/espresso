@@ -18,6 +18,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [1.6.1] — 2026-03-23
+
+**Docs, model references, and version sync patch.**
+
+### Engineering notes
+
+**The version drift problem.**
+After every feature release, three surfaces need to stay in sync: the GitHub repo
+(version badge + CHANGELOG), the landing page (`cupof.news` — deployed via FTP),
+and the API health endpoint (`/api/health` → `version`). v1.6.0 shipped with the
+landing page still showing `v1.6.0` while the repo and API had moved to `1.6.1`.
+Root cause: FTP deploy was separate from Git deploy, and the landing page was
+updated manually each time — easy to forget.
+
+**The INSTALL.md model stale reference.**
+`INSTALL.md` was still documenting `google/gemini-2.0-flash-001` as the default
+model after v1.6.0 upgraded to `google/gemini-2.5-pro`. Any new developer reading
+the install guide would configure the wrong model. Fixed with accurate model table
+and explicit warning about the non-existent `gemini-2.5-pro-preview-03-25` slug.
+
+**The README architecture diagram.**
+The pipeline ASCII diagram still said `Gemini 2.0 Flash (~$0.02/digest)` — the old
+model. Stack table had the same stale reference. Both updated to `Gemini 2.5 Pro`.
+
+### ✨ Changes
+
+- **Landing page:** version badge `v1.6.0` → `v1.6.1` at hero and footer
+- **INSTALL.md:** default model updated to `google/gemini-2.5-pro` throughout;
+  added warning about non-existent preview slug; updated cost estimates;
+  added "Why Gemini 2.5 Pro" explanation
+- **README:** architecture diagram and stack table updated to `Gemini 2.5 Pro`
+- **Docs consistency:** all three surfaces (GitHub, landing, API) now agree on `1.6.1`
+
+---
+
 ## [1.6.0] — 2026-03-23
 
 **Multi-source attribution, Gemini 2.5 Pro, diversity mandate v4, RSS header removed.**

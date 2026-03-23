@@ -81,19 +81,24 @@ openssl rand -hex 32
 
 1. Create a free account at [openrouter.ai](https://openrouter.ai)
 2. **Keys → Create Key** → name it `cup-of-news`
-3. Add ~$5 credit (lasts months at ~$0.02/digest)
+3. Add ~$10 credit (lasts months at ~$0.08-0.15/digest with Gemini 2.5 Pro; or ~$5 if you switch to `gemini-2.0-flash`)
 
-**Default model:** `google/gemini-2.0-flash-001`
+**Default model:** `google/gemini-2.5-pro`
+
+**Why Gemini 2.5 Pro?** It follows complex multi-constraint instructions reliably (diversity rules, mandatory slots, structured JSON). Cheaper models like `gemini-2.0-flash` ignore diversity mandates under topic-heavy news cycles. For a once-a-day task, the quality difference justifies the cost.
 
 **Switch model** — edit `server/pipeline.ts`:
 ```typescript
-const DEFAULT_MODEL = "google/gemini-2.0-flash-001";
-// Alternatives:
-// "anthropic/claude-3-haiku"       ~$0.05/digest — slightly better quality
-// "openai/gpt-4o-mini"             ~$0.04/digest — good balance
-// "anthropic/claude-3.5-sonnet"    ~$0.30/digest — best quality
-// "meta-llama/llama-3.1-70b"       ~$0.01/digest — cheapest
+const DEFAULT_MODEL = "google/gemini-2.5-pro";
+// Alternatives (cheaper, lower quality on diversity rules):
+// "google/gemini-2.0-flash-001"    ~$0.02/digest — fast, weaker instruction following
+// "anthropic/claude-3-haiku"       ~$0.05/digest — good balance
+// "openai/gpt-4o-mini"             ~$0.04/digest — reliable JSON output
+// "anthropic/claude-3.5-sonnet"    ~$0.30/digest — best quality, most expensive
+// "meta-llama/llama-3.1-70b"       ~$0.01/digest — cheapest, weakest diversity compliance
 ```
+
+> ⚠️ **Note:** `google/gemini-2.5-pro-preview-03-25` does NOT exist on OpenRouter. Use `google/gemini-2.5-pro` exactly.
 
 ---
 
@@ -438,18 +443,19 @@ javascript:(function(){fetch('https://app.cupof.news/api/links',{method:'POST',h
 
 ## Changing the AI Model
 
-Edit `server/pipeline.ts`, line ~60:
+Edit `server/pipeline.ts`, line ~80:
 ```typescript
-const DEFAULT_MODEL = "google/gemini-2.0-flash-001";
+const DEFAULT_MODEL = "google/gemini-2.5-pro";
 ```
 
 | Model | Cost/digest | Quality | Speed |
 |-------|-------------|---------|-------|
-| `google/gemini-2.0-flash-001` | ~$0.02 | Excellent | Fast |
+| `google/gemini-2.5-pro` | ~$0.08-0.15 | Best (diversity rules) | Medium |
+| `google/gemini-2.0-flash-001` | ~$0.02 | Good | Fast |
 | `anthropic/claude-3-haiku` | ~$0.05 | Great | Fast |
 | `openai/gpt-4o-mini` | ~$0.04 | Great | Fast |
-| `anthropic/claude-3.5-sonnet` | ~$0.30 | Best | Medium |
-| `meta-llama/llama-3.1-70b` | ~$0.01 | Good | Medium |
+| `anthropic/claude-3.5-sonnet` | ~$0.30 | Excellent | Medium |
+| `meta-llama/llama-3.1-70b` | ~$0.01 | Weak on constraints | Medium |
 
 ---
 

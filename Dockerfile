@@ -1,5 +1,8 @@
 FROM node:20-alpine AS builder
 
+# sharp requires vips at build time for native bindings
+RUN apk add --no-cache vips-dev python3 make g++
+
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -8,6 +11,9 @@ RUN npm run build
 
 FROM node:20-alpine AS runner
 WORKDIR /app
+
+# sharp requires vips at runtime
+RUN apk add --no-cache vips
 
 # Install production deps only
 COPY package*.json ./

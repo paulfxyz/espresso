@@ -1,7 +1,7 @@
 /**
  * @file server/pipeline.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.4.8
+ * @version 3.5.0
  *
  * Cup of News — Daily Digest Generation Pipeline
  *
@@ -48,6 +48,7 @@ import type { DigestStory, Link } from "@shared/schema";
 import { createHash, randomUUID } from "crypto";
 import { fetchTrendingStories } from "./trends";
 import { getEdition, DEFAULT_EDITION } from "@shared/editions";
+import { rehostImage, ensureImagesDir } from "./images";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -395,24 +396,52 @@ async function fetchEditorialImage(
   category: string,
   summary: string,
   apiKey?: string,
-  sourceTitleHint?: string  // Original source title (often English) — helps query generation for non-EN editions
+  sourceTitleHint?: string,  // Original source title (often English) — helps query generation for non-EN editions
+  sourceUrl?: string         // The original article URL — tried first for OG image re-fetch
 ): Promise<string | null> {
-  // ── Tier 3: AI multi-query → Wikimedia ────────────────────────────────────
+  // ── Tier 2.5: Re-fetch OG image directly from the news source ─────────────
+  // This is the most important tier for breaking news (Meta trial, Lukashenko,
+  // Zimbabwe story etc.) — the original Reuters/BBC/AP article has the editorial
+  // photo already. Jina may have failed or returned a bad URL during extraction.
+  // We try a fresh direct fetch here and rehost the result as WebP.
+  if (sourceUrl) {
+    const freshOg = await fetchOgImageDirect(sourceUrl);
+    if (freshOg && isValidOgImage(freshOg)) {
+      // Vision-check the OG image — it's from the correct article, so threshold is lower
+      // We trust OG images from reputable news outlets more than random Wikimedia results
+      const hostedOg = await rehostImage(freshOg);
+      if (hostedOg) {
+        console.log(`  📰 OG re-fetch: rehosted from ${sourceUrl.slice(0, 60)}`);
+        return hostedOg;
+      }
+      // Could not rehost (sharp error, network) — serve the original OG URL directly
+      console.log(`  📰 OG re-fetch: using original URL (rehost failed)`);
+      return freshOg;
+    }
+  }
+
+  // ── Tier 3: AI multi-query → Wikimedia (vision-checked, score ≥ 7) ────────
   if (apiKey) {
     const wikiPhoto = await fetchFromWikimediaMultiQuery(title, summary, apiKey, sourceTitleHint);
-    if (wikiPhoto) return wikiPhoto;
+    if (wikiPhoto) {
+      // Rehost Wikimedia image as WebP on our server
+      const hosted = await rehostImage(wikiPhoto);
+      return hosted ?? wikiPhoto;  // fallback to original if rehost fails
+    }
   }
 
   // ── Tier 4: Unsplash (optional) ───────────────────────────────────────────
   const unsplashKey = process.env.UNSPLASH_ACCESS_KEY;
   if (unsplashKey) {
     const unsplashResult = await fetchFromUnsplash(title, unsplashKey, category);
-    if (unsplashResult) return unsplashResult;
+    if (unsplashResult) {
+      const hosted = await rehostImage(unsplashResult);
+      return hosted ?? unsplashResult;
+    }
   }
 
   // ── Tier 5: null → caller generates category SVG ─────────────────────────
-  // picsum.photos removed: a random photo is worse than the branded SVG fallback.
-  // The SVG always contains the correct category colour and the story headline.
+  // All real-photo attempts failed. SVG is always correct.
   return null;
 }
 
@@ -1703,9 +1732,15 @@ IMPORTANT: For additionalIdxs — if multiple articles in the list cover the SAM
           }
         }
 
-        const imageUrl = ogValid
-          ? original.ogImage!
-          : `__GENERATE__:${s.title}:${s.category}`;
+        // If OG is valid, rehost as WebP immediately (async, but inside Promise.all)
+        let imageUrl: string;
+        if (ogValid && original.ogImage) {
+          const hosted = await rehostImage(original.ogImage);
+          imageUrl = hosted ?? original.ogImage;  // use hosted WebP, fallback to original
+        } else {
+          // Encode sourceUrl into the marker so needsGeneration loop can use it
+          imageUrl = `__GENERATE__:${s.title}:${s.category}:${original.link.url}`;
+        }
 
         // Collect additional sources from additionalIdxs
         const additionalIdxs: number[] = Array.isArray(s.additionalIdxs)
@@ -1773,30 +1808,32 @@ IMPORTANT: For additionalIdxs — if multiple articles in the list cover the SAM
     // Tier 3: Unsplash keyword search — real editorial photos when OG fails.
     // Tier 4: Category SVG — guaranteed fallback, always visually correct.
     for (const story of needsGeneration) {
-      const parts = story.imageUrl.replace("__GENERATE__:", "").split(":");
-      const category = parts[parts.length - 1];
-      const title = parts.slice(0, -1).join(":");
+      // Format: __GENERATE__:{title}:{category}:{sourceUrl}
+      const raw = story.imageUrl.replace("__GENERATE__:", "");
+      // sourceUrl is the last colon-delimited segment starting with http
+      const httpIdx = raw.indexOf(":http");
+      const sourceUrl = httpIdx >= 0 ? raw.slice(httpIdx + 1) : "";
+      const withoutSource = httpIdx >= 0 ? raw.slice(0, httpIdx) : raw;
+      const lastColon = withoutSource.lastIndexOf(":");
+      const category = withoutSource.slice(lastColon + 1);
+      const title = withoutSource.slice(0, lastColon);
       const summary = story.summary?.slice(0, 200) || "";
 
-      // sourceTitle is the original RSS/source article title — often in English even for non-EN editions
-      // (e.g. BBC, Reuters, NYT articles used by the German edition have English titles).
-      // Passing it to the image pipeline helps the query generator understand
-      // the story in English and generate better Wikimedia queries.
       const sourceTitleHint = story.sourceTitle && story.sourceTitle !== title
         ? story.sourceTitle
         : "";
 
-      // Tier 3: AI 5-query → Wikimedia best landscape photo
-      // Tier 4: Unsplash (if UNSPLASH_ACCESS_KEY set)
-      // Tier 5: picsum.photos deterministic seed
-      // Tier 6: category SVG — guaranteed fallback
-      const editorialUrl = await fetchEditorialImage(title, category, summary, apiKey, sourceTitleHint);
+      // Tier 2.5: Re-fetch OG from original source URL (breaking news!)
+      // Tier 3: AI 5-query → Wikimedia (vision score ≥ 7)
+      // Tier 4: Unsplash (optional)
+      // Tier 5: null → category SVG
+      const editorialUrl = await fetchEditorialImage(title, category, summary, apiKey, sourceTitleHint, sourceUrl || story.sourceUrl);
       if (editorialUrl) {
         story.imageUrl = editorialUrl;
-        console.log(`  ✅ Image found: "${title.slice(0, 40)}…"`);
+        console.log(`  ✅ Image: "${title.slice(0, 40)}…"`);
       } else {
-        // Final fallback: deterministic on-brand SVG
         story.imageUrl = generateCategoryImage(title, category);
+        console.log(`  🎨 SVG fallback: "${title.slice(0, 40)}…"`);
       }
     }
   }
@@ -1946,4 +1983,63 @@ Return JSON:
 
   console.log(`🔄 Swapped story in digest #${digestId}: "${newStory.title}"`);
   return newStory;
+}
+
+/**
+ * reprocessDigestImages — fix a single story's image.
+ *
+ * Called by the admin /api/digest/:id/reprocess-images endpoint.
+ * Tries the full image pipeline for a single story:
+ *   1. Re-fetch OG image from source URL
+ *   2. Wikimedia AI multi-query (vision-checked)
+ *   3. Category SVG
+ *
+ * Always returns a valid imageUrl string (never null).
+ */
+export async function reprocessDigestImages(
+  story: DigestStory,
+  apiKey: string
+): Promise<string> {
+  const { title, category, summary, sourceUrl } = story;
+
+  // Skip if already self-hosted (starts with /images/)
+  if (story.imageUrl.startsWith("/images/")) {
+    console.log(`  ⏭️  Already hosted: "${title.slice(0, 40)}"`);
+    return story.imageUrl;
+  }
+
+  // Skip SVG data URIs — these are correct by design
+  if (story.imageUrl.startsWith("data:image/svg")) {
+    console.log(`  ⏭️  SVG placeholder: "${title.slice(0, 40)}"`);
+    return story.imageUrl;
+  }
+
+  // Try to rehost if it's an existing external URL (not picsum, not placeholder)
+  const isPicsum = story.imageUrl.includes("picsum.photos");
+  if (!isPicsum && story.imageUrl.startsWith("http")) {
+    const rehosted = await rehostImage(story.imageUrl);
+    if (rehosted) {
+      console.log(`  📸 Rehosted existing: "${title.slice(0, 40)}"`);
+      return rehosted;
+    }
+  }
+
+  // For picsum or failed rehost: run the full editorial image pipeline
+  const result = await fetchEditorialImage(
+    title,
+    category || "Other",
+    summary?.slice(0, 200) || "",
+    apiKey,
+    undefined,
+    sourceUrl
+  );
+
+  if (result) {
+    console.log(`  ✅ New image: "${title.slice(0, 40)}"`);
+    return result;
+  }
+
+  // Final fallback: category SVG
+  console.log(`  🎨 SVG fallback: "${title.slice(0, 40)}"`);
+  return generateCategoryImage(title, category || "Other");
 }

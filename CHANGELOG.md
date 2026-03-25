@@ -1,3 +1,44 @@
+## [3.5.0] — 2026-03-25
+
+**Self-hosted WebP images. OG re-fetch from source. No more picsum/random photos.**
+
+### Problem: external images, random placeholders, irrelevant Wikimedia results
+
+Breaking news stories (Meta trial, Zimbabwe/Russia) have NO Wikimedia editorial photos
+because Wikimedia is an encyclopedia — it indexes historical content, not today's news.
+The pipeline was falling back to picsum.photos random seeded images, which are
+worse than the category SVG: a wolf or autumn bokeh photo misleads the reader.
+
+Additionally, even valid images were served from external CDNs (Wikimedia, Euronews,
+Reuters) creating hotlinking/availability risks and inconsistent load times.
+
+### Fixes (v3.5.0)
+
+**1. Self-hosted WebP images (`server/images.ts`)**
+Every story image is now:
+- Fetched from its source (OG image or Wikimedia)
+- Converted to WebP at 1200×525px (16:7, sharp 'attention' smart crop)
+- Stored on the Fly.io persistent volume at `/data/images/{hash}.webp`
+- Served at `/images/{hash}.webp` with 30-day immutable cache headers
+- Never served from an external CDN again
+
+**2. OG re-fetch from the original news source (Tier 2.5)**
+For breaking news, the article's own OG image is always the best choice:
+- Fresh HEAD request to the source URL to extract og:image
+- Validated (landscape, not a logo/icon/tracking pixel)
+- Rehosted as WebP immediately
+This covers the Meta trial, Lukashenko story etc. — cases where the news outlet
+has the editorial photo but Jina failed to extract it during the extraction phase.
+
+**3. Admin reprocess-images endpoint**
+`POST /api/digest/:id/reprocess-images` re-runs the full image pipeline for
+every story in an existing digest. Fixes bad images without regenerating the digest.
+
+**4. `POST /api/admin/rehost-image`**
+Rehost any single external URL as a WebP on the server.
+
+---
+
 ## [3.4.8] — 2026-03-25
 
 **Stricter vision check. No more wolves for military stories. SVG replaces picsum.**

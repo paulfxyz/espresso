@@ -1,7 +1,7 @@
 /**
  * @file server/index.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.4.7
+ * @version 3.5.0
  *
  * Cup of News — Express Server Entry Point
  *
@@ -18,6 +18,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { ensureImagesDir } from "./images";
 
 const app = express();
 const httpServer = createServer(app);
@@ -131,6 +132,7 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      ensureImagesDir();
       // Fire-and-forget: ensure every edition has at least one digest.
       // Runs in background so it never delays server startup or first request.
       ensureAllEditionsHaveDigest();

@@ -1,7 +1,7 @@
 /**
  * @file server/routes.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.4.7
+ * @version 3.5.0
  *
  * Cup of News — REST API Routes
  *
@@ -35,9 +35,13 @@
 
 import type { Express } from "express";
 import type { Server } from "http";
+import path from "path";
+import fs from "fs";
+import express from "express";
 import { storage } from "./storage";
 import type { DigestStory } from "@shared/schema";
-import { runDailyPipeline, swapStory } from "./pipeline";
+import { runDailyPipeline, swapStory, reprocessDigestImages } from "./pipeline";
+import { rehostImage, ensureImagesDir } from "./images";
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 
@@ -72,6 +76,22 @@ function requireApiKey(req: any, res: any, next: any) {
 // ─── Route Registration ───────────────────────────────────────────────────────
 
 export function registerRoutes(httpServer: Server, app: Express) {
+
+  // ── Self-hosted images ─────────────────────────────────────────────────────
+  // Serve /images/*.webp from the persistent data volume.
+  const dataDir = process.env.DB_PATH
+    ? path.dirname(process.env.DB_PATH)
+    : path.join(process.cwd(), "data");
+  const imagesDir = path.join(dataDir, "images");
+  ensureImagesDir();
+  app.use("/images", express.static(imagesDir, {
+    maxAge: "30d",
+    immutable: true,
+    etag: true,
+    setHeaders: (res: any) => {
+      res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+    },
+  }));
 
   // ── Admin password change ─────────────────────────────────────────────────
 
@@ -816,5 +836,55 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
     storage.updateDigest(digest.id, { storiesJson: JSON.stringify(reordered) });
     res.json({ success: true });
+  });
+
+  // ── Reprocess images ───────────────────────────────────────────────────────
+
+  /**
+   * POST /api/digest/:id/reprocess-images
+   * Admin. Re-fetch and rehost images for all stories in a digest.
+   * Fixes broken, irrelevant, or externally-hosted images.
+   * Runs per-story: fetches OG from source → rehosts as WebP.
+   * Falls back to Wikimedia (via full pipeline) or SVG if OG fails.
+   */
+  app.post("/api/digest/:id/reprocess-images", requireApiKey, async (req, res) => {
+    const digest = storage.getDigest(Number(req.params.id));
+    if (!digest) return res.status(404).json({ error: "Digest not found" });
+
+    const apiKey = storage.getConfig("openrouter_key") || "";
+    const stories: DigestStory[] = JSON.parse(digest.storiesJson);
+    const results: Array<{ title: string; imageUrl: string; changed: boolean }> = [];
+
+    for (const story of stories) {
+      const oldUrl = story.imageUrl;
+      try {
+        const newUrl = await reprocessDigestImages(story, apiKey);
+        story.imageUrl = newUrl;
+        results.push({ title: story.title.slice(0, 50), imageUrl: newUrl, changed: newUrl !== oldUrl });
+      } catch (e: any) {
+        results.push({ title: story.title.slice(0, 50), imageUrl: oldUrl, changed: false });
+      }
+    }
+
+    storage.updateDigest(digest.id, { storiesJson: JSON.stringify(stories) });
+    res.json({ success: true, results });
+  });
+
+  /**
+   * POST /api/admin/rehost-image
+   * Admin. Fetch a single external image URL and rehost it as WebP.
+   * Body: { url: string }
+   * Returns: { hostedUrl: string }
+   */
+  app.post("/api/admin/rehost-image", requireApiKey, async (req, res) => {
+    const { url } = req.body || {};
+    if (!url || typeof url !== "string") {
+      return res.status(400).json({ error: "url is required" });
+    }
+    const hostedUrl = await rehostImage(url);
+    if (!hostedUrl) {
+      return res.status(422).json({ error: "Could not fetch or convert image" });
+    }
+    res.json({ success: true, hostedUrl });
   });
 }

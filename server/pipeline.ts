@@ -1,7 +1,7 @@
 /**
  * @file server/pipeline.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.3.6
+ * @version 3.3.7
  *
  * Cup of News — Daily Digest Generation Pipeline
  *
@@ -304,54 +304,151 @@ function generateCategoryImage(title: string, category: string): string {
 }
 
 /**
- * fetchEditorialImage — search for a high-quality editorial photograph.
+ * fetchEditorialImage — AI-powered image selection (v3.3.7)
  *
- * v2.1.1: Replaces the Unsplash-only approach with a more robust strategy.
+ * STRATEGY:
+ *   Previous approach (Wikimedia Commons keyword search) returned semantically
+ *   wrong images — searching "Danish election government" returns diagrams and
+ *   maps, not photos of politicians. The fix: use AI to extract the main subject
+ *   (person, country, organisation) then look up their Wikipedia article photo.
  *
- * STRATEGY — WHY NOT JUST UNSPLASH:
- *   Unsplash free tier = 50 requests/hour. With 20 stories × 8 editions = 160
- *   requests per daily generation run, we'd hit the limit on the second edition.
- *   Also requires UNSPLASH_ACCESS_KEY to be configured — adds setup friction.
+ * FULL FALLBACK CHAIN (v3.3.7):
+ *   1. Jina Reader og:image (from article HTML) — already run in extraction
+ *   2. Direct HTML Range fetch (og:image meta tag) — already run
+ *   3. [NEW] AI subject extraction → Wikipedia article photo (free, no key)
+ *      Uses gemini-2.0-flash-001 to extract the main subject, then fetches
+ *      the Wikipedia article's lead photograph via the MediaWiki API.
+ *      This gives real portraits of politicians, action photos of athletes,
+ *      and accurate images of places/organisations.
+ *   4. Wikimedia Commons keyword search (fallback if Wikipedia has no image)
+ *   5. Unsplash (if UNSPLASH_ACCESS_KEY is set)
+ *   6. picsum.photos seeded by title hash (deterministic, always works)
  *
- * APPROACH — WIKIMEDIA COMMONS:
- *   Wikimedia Commons has a public search API (no key required) returning
- *   millions of freely licensed images. We search by story keywords and pick
- *   the first landscape-oriented image. Quality varies but it's always free,
- *   no rate limits, and covers major news topics well (political figures,
- *   geography, sports, science).
- *
- * FALLBACK: picsum.photos with content-hash seed.
- *   picsum.photos returns beautiful random landscape photography.
- *   We seed it with a SHA-256 hash of the title so the same story always
- *   gets the same image (deterministic, visually consistent across loads).
- *   No API key, no rate limits, always reliable.
- *
- * FULL FALLBACK CHAIN (v2.1.1):
- *   1. Jina Reader og:image header (from article HTML)
- *   2. Direct HTML Range fetch (og:image / twitter:image meta tags)
- *   3. Wikimedia Commons search by story keywords (free, no key)
- *   4. picsum.photos seeded by title hash (deterministic, always works)
- *   5. Category SVG (editorial placeholder, on-brand)
- *
- * Note: Unsplash still works if UNSPLASH_ACCESS_KEY is set — it's tried
- * first in tier 3, before Wikimedia, for better photo quality.
+ * Cost: gemini-2.0-flash-001 is ~$0.0001/call. For 20 stories × 9 editions
+ * = 180 calls = ~$0.018/day. Negligible against the $0.07 pipeline cost.
+ * We only call it for stories that didn't get an OG image (typically 5-12/20).
  */
-async function fetchEditorialImage(title: string, category: string): Promise<string | null> {
-  // ── Tier 3a: Unsplash (optional, requires API key) ───────────────────────
+async function fetchEditorialImage(
+  title: string,
+  category: string,
+  apiKey?: string
+): Promise<string | null> {
+  // ── Tier 3: AI subject → Wikipedia article photo ─────────────────────────
+  if (apiKey) {
+    const wikiPhoto = await fetchFromWikipediaViaAI(title, category, apiKey);
+    if (wikiPhoto) return wikiPhoto;
+  }
+
+  // ── Tier 4: Wikimedia Commons keyword search ──────────────────────────────
+  const wikiResult = await fetchFromWikimedia(title, category);
+  if (wikiResult) return wikiResult;
+
+  // ── Tier 5: Unsplash (optional, requires API key) ─────────────────────────
   const unsplashKey = process.env.UNSPLASH_ACCESS_KEY;
   if (unsplashKey) {
     const unsplashResult = await fetchFromUnsplash(title, unsplashKey, category);
     if (unsplashResult) return unsplashResult;
   }
 
-  // ── Tier 3b: Wikimedia Commons (free, no key, broad coverage) ────────────
-  const wikiResult = await fetchFromWikimedia(title, category);
-  if (wikiResult) return wikiResult;
-
-  // ── Tier 3c: picsum.photos with deterministic seed (always works) ─────────
-  // Not calling isValidOgImage() here — picsum always returns valid images
+  // ── Tier 6: picsum.photos with deterministic seed ─────────────────────────
   const seed = sha256(title).slice(0, 8);
   return `https://picsum.photos/seed/${seed}/800/450`;
+}
+
+/**
+ * fetchFromWikipediaViaAI — use AI to extract the main subject of a story,
+ * then fetch that subject's Wikipedia article lead photo.
+ *
+ * This solves the "wrong image" problem: Wikimedia Commons keyword search
+ * returns whatever matches the keywords, which for political or sports stories
+ * is often a diagram, chart, or map. Wikipedia article lead photos are
+ * specifically chosen by editors to represent the article subject — they're
+ * almost always portraits of people, photos of buildings, or action shots.
+ *
+ * Example:
+ *   Title: "Denmark PM resigns after historic election defeat"
+ *   AI extracts: "Mette Frederiksen"
+ *   Wikipedia: portrait photo of Mette Frederiksen ✅
+ *
+ *   Title: "Mohamed Salah Liverpool exit confirmed"
+ *   AI extracts: "Mohamed Salah"
+ *   Wikipedia: action photo of Salah in red jersey ✅
+ *
+ *   Title: "Pakistan offers to mediate US-Iran peace talks"
+ *   AI extracts: "Pakistan"
+ *   Wikipedia: Flag or map of Pakistan — not ideal, skip it
+ *   → falls through to Wikimedia search
+ */
+async function fetchFromWikipediaViaAI(
+  title: string,
+  category: string,
+  apiKey: string
+): Promise<string | null> {
+  try {
+    // Step 1: Ask AI to extract the most photo-searchable subject
+    const prompt = `You are extracting the single most visually identifiable subject from a news headline.
+Return ONLY a Wikipedia article title (person name, place, or organisation) that would have a portrait or action photo.
+Prefer person names > specific places > organisations > abstract topics.
+If the headline is about a generic concept with no specific person/place, return "NONE".
+Return only the Wikipedia article title, nothing else.
+
+Headline: "${title.slice(0, 120)}"`;
+
+    const aiRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://cupof.news",
+        "X-Title": "Cup of News",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.0-flash-001",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 40,
+        temperature: 0,
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!aiRes.ok) return null;
+    const aiData = await aiRes.json() as { choices: Array<{ message: { content: string } }> };
+    const subject = aiData.choices?.[0]?.message?.content?.trim();
+    if (!subject || subject === "NONE" || subject.length < 2) return null;
+
+    // Step 2: Fetch the Wikipedia article's lead photo
+    const encoded = encodeURIComponent(subject);
+    const wikiRes = await fetch(
+      `https://en.wikipedia.org/w/api.php?action=query&titles=${encoded}&prop=pageimages&pithumbsize=1200&format=json&origin=*&pilicense=any`,
+      { signal: AbortSignal.timeout(6000) }
+    );
+    if (!wikiRes.ok) return null;
+
+    const wikiData = await wikiRes.json() as {
+      query?: { pages?: Record<string, { thumbnail?: { source: string } }> }
+    };
+    const pages = Object.values(wikiData.query?.pages ?? {});
+    const imgUrl = pages[0]?.thumbnail?.source;
+
+    if (!imgUrl) return null;
+
+    // Filter out flags, maps, and SVG icons — these are not editorial photos
+    if (imgUrl.includes(".svg") || imgUrl.includes("Flag_of") ||
+        imgUrl.includes("flag_of") || imgUrl.includes("Locator") ||
+        imgUrl.includes("_map") || imgUrl.includes("Map_of") ||
+        imgUrl.includes("coat_of_arms") || imgUrl.includes("Coat_of_arms") ||
+        imgUrl.includes("logo") || imgUrl.includes("Logo")) {
+      return null;
+    }
+
+    // Prefer JPG/PNG portraits — skip low-res thumbnails
+    if (isValidOgImage(imgUrl)) {
+      return imgUrl;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /** Unsplash search — requires UNSPLASH_ACCESS_KEY */
@@ -1170,9 +1267,12 @@ IMPORTANT: For additionalIdxs — if multiple articles in the list cover the SAM
       const category = parts[parts.length - 1];
       const title = parts.slice(0, -1).join(":");
 
-      // Tier 3: editorial image search (Unsplash if key set, then Wikimedia, then picsum seed)
-      // Tier 4: category SVG — only if all fetches fail (network down etc.)
-      const editorialUrl = await fetchEditorialImage(title, category);
+      // Tier 3: AI subject → Wikipedia photo (free, semantically accurate)
+      // Tier 4: Wikimedia Commons keyword fallback
+      // Tier 5: Unsplash (if key set)
+      // Tier 6: picsum.photos deterministic seed
+      // Tier 7: category SVG — guaranteed fallback
+      const editorialUrl = await fetchEditorialImage(title, category, apiKey);
       if (editorialUrl) {
         story.imageUrl = editorialUrl;
         console.log(`  ✅ Image found: "${title.slice(0, 40)}…"`);

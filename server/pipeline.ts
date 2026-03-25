@@ -1293,77 +1293,83 @@ IMPORTANT: For additionalIdxs — if multiple articles in the list cover the SAM
 
   // ── Step 7: Assemble stories with images ─────────────────────────────────
 
-  const stories: DigestStory[] = aiResult.stories
-    .slice(0, 20)
-    .map((s: any): DigestStory | null => {
-      // Guard against AI returning out-of-bounds idx
-      const original = allProcessed[s.idx - 1];
-      if (!original) {
-        console.warn(`⚠️  AI returned idx ${s.idx} but only ${allProcessed.length} items exist`);
-        return null;
-      }
+  // Use async map via Promise.all — required because OG dimension check (Phase 2)
+  // fetches image headers asynchronously. We can't use await inside .map() directly.
+  // All 20 dimension checks run in parallel (they each fetch 1KB), so latency is ~200ms total.
+  const storiesRaw: Array<DigestStory | null> = await Promise.all(
+    aiResult.stories
+      .slice(0, 20)
+      .map(async (s: any): Promise<DigestStory | null> => {
+        // Guard against AI returning out-of-bounds idx
+        const original = allProcessed[s.idx - 1];
+        if (!original) {
+          console.warn(`⚠️  AI returned idx ${s.idx} but only ${allProcessed.length} items exist`);
+          return null;
+        }
 
-      // Image: use OG only if it passes validation, otherwise mark for generation
-      // Phase 1: URL pattern check (fast, synchronous)
-      let ogValid = isValidOgImage(original.ogImage || null);
+        // Image: use OG only if it passes validation, otherwise mark for generation
+        // Phase 1: URL pattern check (fast, synchronous)
+        let ogValid = isValidOgImage(original.ogImage || null);
 
-      // Phase 2: Actual dimension check — reject portrait images that slipped through URL pattern
-      // e.g. NYT images that are landscape URLs but render tall (close-cropped people shots)
-      // We only fetch headers (first 1KB) — negligible latency, high signal
-      if (ogValid && original.ogImage) {
-        const dims = await getImageDimensions(original.ogImage);
-        if (dims) {
-          const ratio = dims.w / dims.h;
-          // Reject if: portrait (ratio < 1.3) OR too small (w < 400px)
-          // 1.3 minimum gives some tolerance for near-square (e.g. 1.33 = 4:3)
-          if (ratio < 1.3 || dims.w < 400) {
-            console.log(`  🚫 OG rejected by dims: ${dims.w}x${dims.h} (ratio ${ratio.toFixed(2)}) — ${original.ogImage?.substring(0, 80)}`);
-            ogValid = false;
+        // Phase 2: Actual dimension check — reject portrait images that slipped through URL pattern
+        // e.g. Reuters/AP/AFP CDN images that are portrait but have neutral CDN URLs
+        // Fetches only 1KB (Range: bytes=0-1023) — negligible overhead, all 20 run in parallel
+        if (ogValid && original.ogImage) {
+          const dims = await getImageDimensions(original.ogImage);
+          if (dims) {
+            const ratio = dims.w / dims.h;
+            // Reject if: portrait (ratio < 1.3) OR too small (w < 400px)
+            // 1.3 minimum allows 4:3 (ratio 1.33) but blocks near-square and portrait
+            if (ratio < 1.3 || dims.w < 400) {
+              console.log(`  🚫 OG rejected by dims: ${dims.w}x${dims.h} (ratio ${ratio.toFixed(2)}) — ${original.ogImage?.substring(0, 80)}`);
+              ogValid = false;
+            }
           }
         }
-      }
 
-      const imageUrl = ogValid
-        ? original.ogImage!
-        : `__GENERATE__:${s.title}:${s.category}`;
+        const imageUrl = ogValid
+          ? original.ogImage!
+          : `__GENERATE__:${s.title}:${s.category}`;
 
-      // Collect additional sources from additionalIdxs
-      const additionalIdxs: number[] = Array.isArray(s.additionalIdxs)
-        ? s.additionalIdxs.filter((i: number) => i > 0 && i <= allProcessed.length && i !== s.idx)
-        : [];
+        // Collect additional sources from additionalIdxs
+        const additionalIdxs: number[] = Array.isArray(s.additionalIdxs)
+          ? s.additionalIdxs.filter((i: number) => i > 0 && i <= allProcessed.length && i !== s.idx)
+          : [];
 
-      const sources = [
-        // Primary source
-        {
-          url: original.link.url,
-          title: original.title || original.link.url,
-          domain: (() => { try { return new URL(original.link.url).hostname.replace("www.", ""); } catch { return original.link.url; } })(),
-        },
-        // Additional sources (up to 2 more)
-        ...additionalIdxs.slice(0, 2).map((i: number) => {
-          const src = allProcessed[i - 1];
-          if (!src) return null;
-          return {
-            url: src.link.url,
-            title: src.title || src.link.url,
-            domain: (() => { try { return new URL(src.link.url).hostname.replace("www.", ""); } catch { return src.link.url; } })(),
-          };
-        }).filter(Boolean) as Array<{url:string;title:string;domain:string}>,
-      ];
+        const sources = [
+          // Primary source
+          {
+            url: original.link.url,
+            title: original.title || original.link.url,
+            domain: (() => { try { return new URL(original.link.url).hostname.replace("www.", ""); } catch { return original.link.url; } })(),
+          },
+          // Additional sources (up to 2 more)
+          ...additionalIdxs.slice(0, 2).map((i: number) => {
+            const src = allProcessed[i - 1];
+            if (!src) return null;
+            return {
+              url: src.link.url,
+              title: src.title || src.link.url,
+              domain: (() => { try { return new URL(src.link.url).hostname.replace("www.", ""); } catch { return src.link.url; } })(),
+            };
+          }).filter(Boolean) as Array<{url:string;title:string;domain:string}>,
+        ];
 
-      return {
-        id: randomUUID(),
-        title: s.title || original.title || "Untitled",
-        summary: s.summary || "",
-        imageUrl,
-        sourceUrl: original.link.url,
-        sourceTitle: original.title || original.link.url,
-        category: s.category || "Other",
-        linkId: original.link.id,
-        sources,
-      };
-    })
-    .filter((s: DigestStory | null): s is DigestStory => s !== null);
+        return {
+          id: randomUUID(),
+          title: s.title || original.title || "Untitled",
+          summary: s.summary || "",
+          imageUrl,
+          sourceUrl: original.link.url,
+          sourceTitle: original.title || original.link.url,
+          category: s.category || "Other",
+          linkId: original.link.id,
+          sources,
+        };
+      })
+  );
+
+  const stories: DigestStory[] = storiesRaw.filter((s): s is DigestStory => s !== null);
 
   if (stories.length === 0) {
     throw new Error("AI returned 0 valid stories — check the OpenRouter response format");

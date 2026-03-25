@@ -1,7 +1,7 @@
 /**
  * @file client/src/pages/DigestView.tsx
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.4.0
+ * @version 3.4.1
  *
  * Cup of News — Public Digest Reader
  *
@@ -581,16 +581,17 @@ function StoryCard({ story, index, total, edition }: { story: DigestStory; index
       {/* px: 4 mobile (tight but readable) → 8 sm → 12 lg
            py: 5 mobile (compact, more content visible) → 8 sm → 14 lg (editorial air) */}
 
-      {/* Hero image
-           On mobile: aspect-[16/7] (shorter than 16/9) so the image doesn't eat
-           too much of the small viewport. mb-4 on mobile, mb-6 on desktop.
-           On desktop: full aspect-video for editorial presence. */}
+      {/* Hero image (v3.4.1)
+           aspect-video (16:9) on all sizes — relaxed from 16/7 on mobile.
+           object-contain: shows the full image without cropping.
+           bg-card: neutral background fills any letterbox space cleanly.
+           max-h cap prevents very tall images from dominating the viewport. */}
       {story.imageUrl && (
-        <div className="w-full aspect-[16/7] sm:aspect-video bg-muted border border-border/50 overflow-hidden mb-4 sm:mb-6">
+        <div className="w-full aspect-video bg-card border border-border/30 overflow-hidden mb-4 sm:mb-6 flex items-center justify-center">
           <img
             src={story.imageUrl}
             alt={story.title}
-            className="w-full h-full object-cover"
+            className="w-full h-full object-contain"
             onError={e => {
               (e.target as HTMLImageElement).parentElement!.style.display = "none";
             }}
@@ -1226,11 +1227,11 @@ function GridOverlay({
               }`}
             >
               {story.imageUrl && (
-                <div className="aspect-video bg-muted mb-3 overflow-hidden">
+                <div className="aspect-video bg-card mb-3 overflow-hidden flex items-center justify-center">
                   <img
                     src={story.imageUrl}
                     alt=""
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-contain"
                     onError={e => { (e.target as HTMLImageElement).parentElement!.style.display = "none"; }}
                   />
                 </div>

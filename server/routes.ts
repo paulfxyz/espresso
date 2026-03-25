@@ -738,10 +738,11 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const idx = stories.findIndex((s) => s.id === req.params.storyId);
     if (idx === -1) return res.status(404).json({ error: "Story not found" });
 
-    const { title, summary, category } = req.body || {};
+    const { title, summary, category, imageUrl } = req.body || {};
     if (title) stories[idx].title = title;
     if (summary) stories[idx].summary = summary;
     if (category) stories[idx].category = category;
+    if (imageUrl) stories[idx].imageUrl = imageUrl;  // v3.5.0: allow patching imageUrl
 
     storage.updateDigest(digest.id, { storiesJson: JSON.stringify(stories) });
     res.json({ success: true, story: stories[idx] });

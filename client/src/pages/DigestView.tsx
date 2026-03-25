@@ -1,7 +1,7 @@
 /**
  * @file client/src/pages/DigestView.tsx
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.4.2
+ * @version 3.4.3
  *
  * Cup of News — Public Digest Reader
  *
@@ -587,11 +587,16 @@ function StoryCard({ story, index, total, edition }: { story: DigestStory; index
            bg-card: neutral background fills any letterbox space cleanly.
            max-h cap prevents very tall images from dominating the viewport. */}
       {story.imageUrl && (
-        <div className="w-full aspect-video bg-card border border-border/30 overflow-hidden mb-4 sm:mb-6 flex items-center justify-center">
+        /* v3.4.3: Full-bleed hero image.
+           -mx offsets cancel the article's px padding so the image runs edge-to-edge.
+           aspect-[16/7]: wider than 16:9 — shows more width, less vertical letterbox.
+           object-cover: fills the frame completely, no black bars.
+           object-position center: crops symmetrically from all sides (safe for most photos). */
+        <div className="-mx-4 sm:-mx-8 lg:-mx-12 w-auto aspect-[16/7] overflow-hidden mb-5 sm:mb-7 lg:mb-9">
           <img
             src={story.imageUrl}
             alt={story.title}
-            className="w-full h-full object-contain"
+            className="w-full h-full object-cover object-center"
             onError={e => {
               (e.target as HTMLImageElement).parentElement!.style.display = "none";
             }}
@@ -1227,11 +1232,11 @@ function GridOverlay({
               }`}
             >
               {story.imageUrl && (
-                <div className="aspect-video bg-card mb-3 overflow-hidden flex items-center justify-center">
+                <div className="aspect-[16/7] mb-3 overflow-hidden">
                   <img
                     src={story.imageUrl}
                     alt=""
-                    className="w-full h-full object-contain"
+                    className="w-full h-full object-cover object-center"
                     onError={e => { (e.target as HTMLImageElement).parentElement!.style.display = "none"; }}
                   />
                 </div>

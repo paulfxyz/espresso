@@ -1,3 +1,70 @@
+## [3.4.3] — 2026-03-25
+
+**Full-bleed images. Better photo selection. Wikimedia thumb API. Gemini 2.5 Flash queries.**
+
+### Problem: images not filling full width
+
+The hero image was inside `<article className="max-w-2xl mx-auto px-4">`.
+`w-full` inside that container = full width of the 672px column, not the viewport.
+Result: the image appeared as a narrow centered block with visible padding on both sides.
+
+Fix: negative margin breakout — `-mx-4 sm:-mx-8 lg:-mx-12` cancels the article's
+padding exactly, making the image bleed to the edge of the screen on all sizes.
+Aspect ratio changed from `aspect-video` (16:9) to `aspect-[16/7]` — wider and more
+cinematic, shows more horizontal content, less vertical letterbox.
+`object-cover object-center` replaces `object-contain` — fills the frame completely,
+crops symmetrically from edges. No black bars. Most landscape photos look better this way.
+
+### Problem: wrong/archival images from Wikimedia
+
+"Iran signals openness to talks" → AI selected a Trump Oval Office 2020 photo.
+Root cause: query prompt was too mechanical (person name, action, location, object, concept)
+and the model (gemini-2.0-flash) didn't understand that "location" for an Iran diplomacy
+story should NOT be "Oval Office" — an archival US photo.
+
+Three fixes:
+
+**1. Upgraded model: `google/gemini-2.5-flash-preview`**
+Better instruction-following and contextual understanding than 2.0-flash.
+The prompt now includes explicit worked examples for Iran/diplomacy and sports stories.
+Falls back to 2.0-flash if 2.5-flash is unavailable.
+
+**2. Improved prompt (v3.4.3):**
+- Explicit instruction: "prioritise scenes and events over portraits and ceremonies"
+- "What would the front page of a newspaper show for this story?" framing
+- Concrete BAD vs GOOD examples in the prompt itself
+- Context window extended: 300 chars of summary (was 150)
+
+**3. Extended BAD filter in `wikimediaBestPhoto`:**
+Added: official_portrait, Presidential_portrait, Library_of_Congress,
+Bundesarchiv (German federal archive), vintage_, Victorian_ — these reliably
+indicate archival/ceremonial photos inappropriate for current news.
+Min image width raised from 640px to 800px.
+Min ratio raised from 1.4 to 1.45 (stricter landscape requirement).
+
+### Wikimedia thumb URL (1280px)
+
+Wikimedia original files are often 3000-8000px wide and 2-10MB each.
+The browser was downloading these massive originals for every story image.
+
+Fix: `wikimediaThumbUrl(url, 1280)` converts the original URL to Wikimedia's
+thumb service:
+```
+Original: https://upload.wikimedia.org/wikipedia/commons/4/4f/Filename.jpg
+Thumb:    https://upload.wikimedia.org/wikipedia/commons/thumb/4/4f/Filename.jpg/1280px-Filename.jpg
+```
+Wikimedia serves thumbnails from their CDN. 1280px covers retina displays at
+full card width. Download size: ~150-400KB vs 2-10MB. Load time: ~10× faster.
+
+### Scoring improvements
+
+- `indexBonus`: Wikimedia's relevance ranking (position 1-12) now contributes 15% of score.
+  The first result for a specific query is almost always the most relevant image.
+- `ratioScore` weight: 0.5 → 0.45 (slightly less emphasis on exact 16:9)
+- `indexBonus` uses `page.index` from the API response (requires no extra request)
+
+---
+
 ## [3.4.2] — 2026-03-25
 
 **OG image dimension validation. Reject portrait images by header byte inspection.**

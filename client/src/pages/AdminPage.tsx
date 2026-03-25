@@ -212,6 +212,8 @@ function OverviewTab({ headers }: { headers: Record<string, string> }) {
         )}
       </div>
 
+      <PinSettingsCard headers={headers} />
+
       {/* API reference */}
       <div className="border border-border bg-card p-6">
         <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground font-ui mb-4">Submit Links via API</h2>
@@ -220,6 +222,82 @@ function OverviewTab({ headers }: { headers: Record<string, string> }) {
   -H "x-admin-key: YOUR_PASSWORD" \\
   -d '{"url": "https://example.com/article"}'`}</pre>
       </div>
+    </div>
+  );
+}
+
+
+// ── Digest PIN Settings Card (v3.2.7) ─────────────────────────────────────────
+// Rendered inside OverviewTab. Lets the admin change the digest generation PIN
+// (the numeric code entered via the triple-tap keypad in the reader).
+
+function PinSettingsCard({ headers }: { headers: Record<string, string> }) {
+  const [pin,     setPin]     = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [saved,   setSaved]   = useState(false);
+  const [error,   setError]   = useState("");
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      if (!/^\d{4,8}$/.test(pin)) throw new Error("PIN must be 4–8 digits.");
+      if (pin !== confirm) throw new Error("PINs don\'t match.");
+      const r = await apiRequest("POST", "/api/admin/digest-pin", { pin }, headers);
+      if (!r.ok) throw new Error((await r.json()).error || "Failed");
+      return r.json();
+    },
+    onSuccess: () => {
+      setSaved(true);
+      setPin(""); setConfirm("");
+      setTimeout(() => setSaved(false), 2000);
+    },
+    onError: (e: any) => setError(e.message),
+  });
+
+  return (
+    <div className="border border-border bg-card p-5">
+      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#E3120B] font-ui mb-1">
+        Digest Generation PIN
+      </p>
+      <p className="text-xs text-muted-foreground font-ui mb-4">
+        4–8 digit PIN used by the reader's triple-tap keypad to generate a new digest.
+        Default is <code className="bg-muted px-1 text-xs">123456</code>.
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 font-ui">New PIN</label>
+          <input
+            type="password"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={8}
+            placeholder="4–8 digits"
+            value={pin}
+            onChange={e => { setPin(e.target.value.replace(/\D/g, "")); setError(""); setSaved(false); }}
+            className="w-full text-sm px-3 py-2 border border-border bg-background focus:outline-none focus:border-[#E3120B] font-ui tracking-widest"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 font-ui">Confirm PIN</label>
+          <input
+            type="password"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={8}
+            placeholder="Repeat"
+            value={confirm}
+            onChange={e => { setConfirm(e.target.value.replace(/\D/g, "")); setError(""); setSaved(false); }}
+            className="w-full text-sm px-3 py-2 border border-border bg-background focus:outline-none focus:border-[#E3120B] font-ui tracking-widest"
+          />
+        </div>
+      </div>
+      {error && <p className="text-xs text-[#E3120B] font-ui mt-2">{error}</p>}
+      <button
+        onClick={() => saveMutation.mutate()}
+        disabled={saveMutation.isPending || pin.length < 4}
+        className="mt-3 px-4 py-2 bg-foreground text-background text-xs font-bold font-ui uppercase tracking-wider hover:opacity-80 transition-opacity disabled:opacity-30"
+      >
+        {saveMutation.isPending ? "Saving…" : saved ? "✓ Saved" : "Save PIN"}
+      </button>
     </div>
   );
 }

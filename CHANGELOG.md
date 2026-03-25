@@ -1,3 +1,54 @@
+## [3.2.7] — 2026-03-25
+
+**PIN keypad for digest generation. Click-outside to close grid overlay. Admin PIN settings.**
+
+### 1. "All Stories" grid — click outside to close
+
+The grid overlay (opened via the layout grid icon in the header) had no way to
+close it by tapping the backdrop — only the X button worked.
+
+Fix: same two-line pattern used for the sources modal:
+- Outer `<div onClick={onClose}>` on the backdrop
+- Inner `<div onClick={e => e.stopPropagation()}>` on the content panel
+
+### 2. Triple-tap logo → PIN keypad (replaces direct generate)
+
+The previous behaviour (triple-click → read adminKey from localStorage →
+POST /generate) had two problems:
+1. On mobile the admin key isn't always stored (user may not have visited /#/admin)
+2. Typing a full password on a phone is a poor UX
+
+New flow:
+1. Triple-tap the "C" logo → PIN keypad modal appears
+2. Enter a 4–8 digit PIN (default: `123456`)
+3. Server verifies at `POST /api/admin/verify-pin` (public endpoint, no admin key)
+4. On success: `POST /api/digest/generate` with adminKey from localStorage
+   (if not stored → redirect to /#/admin to authenticate first)
+5. On wrong PIN: shake animation + attempt counter (3 attempts → 30s lockout)
+
+**Keypad design:**
+- Full-screen backdrop (click outside to close)
+- Dot display (● for entered digits, ○ for remaining)
+- 3×3 numpad + bottom row: backspace | 0 | OK
+- Keyboard support: 0-9, Backspace, Enter, Escape
+- "Generating… Xs" elapsed counter while pipeline runs
+- Descriptive error states (wrong PIN, network error, locked)
+
+**New server endpoints:**
+- `POST /api/admin/verify-pin` — public, verifies PIN against stored/default
+- `GET  /api/admin/digest-pin/status` — admin, returns { configured }
+- `POST /api/admin/digest-pin` — admin, sets new PIN (4–8 digits, digits only)
+
+### 3. Admin panel — PIN settings
+
+A "Digest Generation PIN" card was added to the Overview tab in the admin panel.
+- Two fields: New PIN + Confirm PIN (both numeric, max 8 digits)
+- Saves to `config` table as key `digest_pin`
+- Default `123456` shown as placeholder
+- `inputMode="numeric"` for mobile keyboard optimisation
+
+---
+
 ## [3.2.6] — 2026-03-25
 
 **"Read again" button (native in 9 languages). Quote card matches app design. 222 RSS sources.**

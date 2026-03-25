@@ -1,7 +1,7 @@
 /**
  * @file client/src/pages/DigestView.tsx
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.2.6
+ * @version 3.2.7
  *
  * Cup of News — Public Digest Reader
  *
@@ -137,76 +137,35 @@ export default function DigestView() {
   //   Same reason as before — ensures the latest JS bundle is loaded, not just
   //   the latest data. See v3.1.0 notes above for full rationale.
 
-  const [logoSpinning,   setLogoSpinning]   = useState(false);
-  const [logoGenerating, setLogoGenerating] = useState(false);
-  const [logoError,      setLogoError]      = useState(false);
-  const [generateSecs,   setGenerateSecs]   = useState(0);
-  const logoClickCount   = useRef(0);
-  const logoClickTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const generateInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  // ── Logo click state (v3.2.7) ─────────────────────────────────────────────
+  //
+  // Single click  : 1250ms spin → window.location.reload()
+  // Triple click  : open PIN keypad modal.
+  //   User enters the digest generation PIN (default "123456", configurable
+  //   in admin panel). On correct PIN: POST /api/digest/generate → reload.
+  //   Wrong PIN: shake animation + attempts counter (3 attempts, then 30s lock).
+  //
+  // Why PIN instead of admin key:
+  //   The admin key is a full password — you wouldn't want to type it on a
+  //   phone keypad. The PIN is a separate short numeric secret (4-8 digits)
+  //   specifically for triggering generation from the reader. It's verified
+  //   server-side (/api/admin/verify-pin) without exposing the admin key.
+
+  const [logoSpinning,  setLogoSpinning]  = useState(false);
+  const [showPinModal,  setShowPinModal]  = useState(false);
+  const logoClickCount  = useRef(0);
+  const logoClickTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleLogoClick = useCallback(() => {
-    // Block all clicks while an operation is already running
-    if (logoSpinning || logoGenerating) return;
+    if (logoSpinning || showPinModal) return;
 
     logoClickCount.current += 1;
-
-    // Clear any existing reset timer
     if (logoClickTimer.current) clearTimeout(logoClickTimer.current);
 
     if (logoClickCount.current >= 3) {
-      // ── Triple click: generate a new digest ────────────────────────────────
       logoClickCount.current = 0;
-
-      const adminKey = localStorage.getItem('adminKey') || localStorage.getItem('cup_admin_key') || '';
-      if (!adminKey) {
-        // No key stored — send to admin to authenticate first
-        window.location.href = '/#/admin';
-        return;
-      }
-
-      setLogoGenerating(true);
-      setGenerateSecs(0);
-      setLogoError(false);
-
-      // Live elapsed-second counter — reassures the user during 30-90s generation
-      let secs = 0;
-      generateInterval.current = setInterval(() => {
-        secs += 1;
-        setGenerateSecs(secs);
-      }, 1000);
-
-      fetch('/api/digest/generate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-key': adminKey,
-        },
-        body: JSON.stringify({ edition: edition.id }),
-      })
-        .then(async (res) => {
-          if (generateInterval.current) clearInterval(generateInterval.current);
-          if (res.ok || res.status === 409) {
-            // 200 = new digest generated; 409 = already exists for today (still ok)
-            // Either way, reload to pick up the freshest content + latest bundle
-            setTimeout(() => window.location.reload(), 400);
-          } else {
-            // API returned an unexpected error — show error state briefly then reset
-            setLogoError(true);
-            setLogoGenerating(false);
-            setTimeout(() => setLogoError(false), 3000);
-          }
-        })
-        .catch(() => {
-          if (generateInterval.current) clearInterval(generateInterval.current);
-          setLogoError(true);
-          setLogoGenerating(false);
-          setTimeout(() => setLogoError(false), 3000);
-        });
-
+      setShowPinModal(true);          // open PIN keypad
     } else {
-      // ── Single / double click: schedule a hard reload after 500ms window ──
-      // If a 3rd click doesn't arrive within 500ms, treat as single-click reload
       logoClickTimer.current = setTimeout(() => {
         if (logoClickCount.current < 3) {
           logoClickCount.current = 0;
@@ -215,14 +174,11 @@ export default function DigestView() {
         }
       }, 500);
     }
-  }, [logoSpinning, logoGenerating, edition.id]);
+  }, [logoSpinning, showPinModal]);
 
-  // Clean up timers on unmount
+  // Clean up on unmount
   useEffect(() => {
-    return () => {
-      if (logoClickTimer.current)   clearTimeout(logoClickTimer.current);
-      if (generateInterval.current) clearInterval(generateInterval.current);
-    };
+    return () => { if (logoClickTimer.current) clearTimeout(logoClickTimer.current); };
   }, []);
 
   // When the edition changes, reset to first card
@@ -347,41 +303,24 @@ export default function DigestView() {
                3 clicks : generate new digest for current edition → reload
                Generating state shows Loader2 spinner + elapsed seconds tooltip
                Error state flashes red briefly then resets */}
+          {/* Logo — v3.2.7: triple-click opens PIN keypad */}
           <button
             onClick={handleLogoClick}
             className="group flex items-center gap-2 flex-shrink-0 transition-opacity"
-            aria-label={logoGenerating ? "Generating digest…" : logoError ? "Error — try again" : "Click to refresh · Triple-click to generate new digest"}
-            title={logoGenerating ? `Generating ${edition.name} digest… ${generateSecs}s` : logoError ? "Generation failed — check admin key" : "Click to refresh · Triple-click to generate new digest"}
-            disabled={logoSpinning || logoGenerating}
+            aria-label="Click to refresh · Triple-click to generate new digest"
+            title="Click to refresh · Triple-click to generate new digest"
+            disabled={logoSpinning || showPinModal}
           >
-            <div className={`w-8 h-8 flex items-center justify-center flex-shrink-0 transition-all ${
-              logoError      ? "bg-amber-500"  :
-              logoGenerating ? "bg-[#E3120B]"  :
-              "bg-[#E3120B] group-hover:scale-110"
-            }`}>
-              {logoGenerating ? (
-                /* Generating: Loader2 spins while fetch is in-flight */
-                <Loader2 size={14} className="text-white animate-spin" />
-              ) : logoSpinning ? (
-                /* Single-click reload: RefreshCw spins for 1250ms */
+            <div className="w-8 h-8 bg-[#E3120B] flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-110">
+              {logoSpinning ? (
                 <RefreshCw size={14} className="text-white animate-spin" />
-              ) : logoError ? (
-                /* Error flash: show X briefly */
-                <X size={14} className="text-white" />
               ) : (
                 <>
-                  {/* Default: "C"; hover: static RefreshCw */}
                   <span className="block group-hover:hidden text-white font-black text-sm font-display tracking-tight">C</span>
                   <RefreshCw size={14} className="hidden group-hover:block text-white" />
                 </>
               )}
             </div>
-            {/* Elapsed seconds badge — only visible during generation */}
-            {logoGenerating && generateSecs > 0 && (
-              <span className="text-[10px] font-black font-ui text-[#E3120B] tabular-nums">
-                {generateSecs}s
-              </span>
-            )}
           </button>
 
           {/* Progress dots — centred, fills remaining space */}
@@ -442,6 +381,18 @@ export default function DigestView() {
           onSelect={i => { triggerSlide(i > cardIndex ? 'left' : 'right'); setCardIndex(i); setShowGrid(false); }}
           onClose={() => setShowGrid(false)}
           edition={edition}
+        />
+      )}
+
+      {/* ── PIN Keypad Modal (v3.2.7) ────────────────────────────────────────
+           Opens on triple-click of the logo. User enters a 4-8 digit PIN.
+           Server verifies at /api/admin/verify-pin (no admin key needed).
+           On success: POST /api/digest/generate with admin key from localStorage,
+           or fallback: redirect to /#/admin if no key is saved. */}
+      {showPinModal && (
+        <PinKeypad
+          edition={edition}
+          onClose={() => setShowPinModal(false)}
         />
       )}
 
@@ -794,6 +745,270 @@ function QuoteCard({ quote, author, date, label = "Today's Thought", refreshLabe
     </div>
   );
 }
+
+// ─── PIN Keypad Modal (v3.2.7) ───────────────────────────────────────────────
+//
+// Opened by triple-clicking the "C" logo in the reader header.
+// Presents a numeric keypad (0-9 + backspace + confirm).
+// Verifies PIN against /api/admin/verify-pin (public endpoint, no admin key).
+// On success: calls POST /api/digest/generate with the stored admin key.
+//
+// Security model:
+//   - The PIN (4-8 digits, default "123456") is a lightweight guard against
+//     accidental generation. It is NOT a replacement for the admin password.
+//   - 3 wrong attempts → 30-second lockout (client-side only, reset on reload).
+//   - The admin key for /api/digest/generate is read from localStorage("adminKey").
+//     If absent, the user is redirected to /#/admin to authenticate first.
+//
+// Design: full-screen overlay, dark semi-opaque backdrop, centred modal.
+// Numpad is 3×3 + bottom row (backspace, 0, confirm).
+// Current PIN shown as ● dots with shake animation on wrong entry.
+
+function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) {
+  const [digits,      setDigits]      = useState<string[]>([]);
+  const [shake,       setShake]       = useState(false);
+  const [attempts,    setAttempts]    = useState(0);
+  const [locked,      setLocked]      = useState(false);
+  const [lockSecs,    setLockSecs]    = useState(0);
+  const [generating,  setGenerating]  = useState(false);
+  const [genSecs,     setGenSecs]     = useState(0);
+  const [error,       setError]       = useState("");
+  const genInterval   = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Lockout countdown
+  useEffect(() => {
+    if (!locked) return;
+    const t = setInterval(() => {
+      setLockSecs(s => {
+        if (s <= 1) { clearInterval(t); setLocked(false); setAttempts(0); return 0; }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [locked]);
+
+  // Generation elapsed counter
+  useEffect(() => {
+    return () => { if (genInterval.current) clearInterval(genInterval.current); };
+  }, []);
+
+  const press = (d: string) => {
+    if (locked || generating) return;
+    setDigits(prev => prev.length < 8 ? [...prev, d] : prev);
+  };
+
+  const backspace = () => {
+    if (locked || generating) return;
+    setDigits(prev => prev.slice(0, -1));
+  };
+
+  const confirm = async () => {
+    if (locked || generating || digits.length < 4) return;
+    const pin = digits.join("");
+
+    try {
+      const r = await fetch("/api/admin/verify-pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      const data = await r.json();
+
+      if (!data.valid) {
+        // Wrong PIN — shake and increment attempts
+        setShake(true);
+        setDigits([]);
+        setTimeout(() => setShake(false), 500);
+        const next = attempts + 1;
+        setAttempts(next);
+        if (next >= 3) { setLocked(true); setLockSecs(30); }
+        return;
+      }
+    } catch {
+      setError("Connection error. Try again.");
+      setDigits([]);
+      return;
+    }
+
+    // PIN correct — generate digest
+    const adminKey = localStorage.getItem("adminKey") || "";
+    if (!adminKey) {
+      onClose();
+      window.location.href = "/#/admin";
+      return;
+    }
+
+    setGenerating(true);
+    setGenSecs(0);
+    setError("");
+    let secs = 0;
+    genInterval.current = setInterval(() => { secs += 1; setGenSecs(secs); }, 1000);
+
+    try {
+      const res = await fetch("/api/digest/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-key": adminKey },
+        body: JSON.stringify({ edition: edition.id }),
+      });
+      if (genInterval.current) clearInterval(genInterval.current);
+      if (res.ok || res.status === 409) {
+        setTimeout(() => window.location.reload(), 400);
+      } else {
+        const e = await res.json().catch(() => ({}));
+        setError(e.error || "Generation failed. Try again.");
+        setGenerating(false);
+      }
+    } catch {
+      if (genInterval.current) clearInterval(genInterval.current);
+      setError("Network error. Try again.");
+      setGenerating(false);
+    }
+  };
+
+  // Keyboard support
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key >= "0" && e.key <= "9") press(e.key);
+      else if (e.key === "Backspace") backspace();
+      else if (e.key === "Enter") confirm();
+      else if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  });
+
+  const KEYS = [["1","2","3"],["4","5","6"],["7","8","9"]];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-card border border-border w-full max-w-xs shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="border-b-2 border-[#E3120B] px-5 py-4 flex items-center justify-between">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#E3120B] font-ui">
+              Generate digest
+            </p>
+            <p className="text-xs text-muted-foreground font-ui mt-0.5">
+              {edition.flag} {edition.name}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center hover:bg-accent rounded text-muted-foreground hover:text-foreground"
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="px-5 py-5 space-y-4">
+          {/* PIN display — dots */}
+          <div className={`flex justify-center gap-3 py-2 ${shake ? "animate-[pin-shake_0.4s_ease]" : ""}`}>
+            <style>{`
+              @keyframes pin-shake {
+                0%,100%{ transform:translateX(0) }
+                20%{ transform:translateX(-6px) }
+                40%{ transform:translateX(6px) }
+                60%{ transform:translateX(-4px) }
+                80%{ transform:translateX(4px) }
+              }
+            `}</style>
+            {Array.from({ length: Math.max(digits.length, 4) }).map((_, i) => (
+              <div
+                key={i}
+                className={`w-3 h-3 rounded-full border-2 transition-all duration-150 ${
+                  i < digits.length
+                    ? "bg-[#E3120B] border-[#E3120B]"
+                    : "bg-transparent border-border"
+                }`}
+              />
+            ))}
+          </div>
+
+          {/* Lock / error message */}
+          {locked && (
+            <p className="text-center text-xs text-amber-500 font-ui">
+              Too many attempts. Wait {lockSecs}s.
+            </p>
+          )}
+          {error && !locked && (
+            <p className="text-center text-xs text-[#E3120B] font-ui">{error}</p>
+          )}
+
+          {/* Generating state */}
+          {generating && (
+            <div className="text-center space-y-1">
+              <div className="flex justify-center">
+                <Loader2 size={20} className="text-[#E3120B] animate-spin" />
+              </div>
+              <p className="text-xs text-muted-foreground font-ui">
+                Generating {edition.name} digest… {genSecs}s
+              </p>
+            </div>
+          )}
+
+          {/* Numpad */}
+          {!generating && (
+            <div className="space-y-1.5">
+              {KEYS.map(row => (
+                <div key={row[0]} className="grid grid-cols-3 gap-1.5">
+                  {row.map(k => (
+                    <button
+                      key={k}
+                      onClick={() => press(k)}
+                      disabled={locked}
+                      className="h-12 bg-accent hover:bg-accent/80 text-foreground font-bold text-lg font-ui transition-colors disabled:opacity-30 active:scale-95"
+                    >
+                      {k}
+                    </button>
+                  ))}
+                </div>
+              ))}
+              {/* Bottom row: backspace | 0 | confirm */}
+              <div className="grid grid-cols-3 gap-1.5">
+                <button
+                  onClick={backspace}
+                  disabled={locked || digits.length === 0}
+                  className="h-12 bg-accent hover:bg-accent/80 text-muted-foreground transition-colors disabled:opacity-30 flex items-center justify-center active:scale-95"
+                >
+                  <svg width="18" height="14" viewBox="0 0 18 14" fill="none">
+                    <path d="M7 1L1 7l6 6M1 7h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+                  </svg>
+                </button>
+                <button
+                  onClick={() => press("0")}
+                  disabled={locked}
+                  className="h-12 bg-accent hover:bg-accent/80 text-foreground font-bold text-lg font-ui transition-colors disabled:opacity-30 active:scale-95"
+                >
+                  0
+                </button>
+                <button
+                  onClick={confirm}
+                  disabled={locked || digits.length < 4}
+                  className="h-12 bg-[#E3120B] hover:bg-[#B50D08] text-white font-bold text-sm font-ui transition-colors disabled:opacity-30 active:scale-95 uppercase tracking-wide"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 pb-4">
+          <p className="text-[9px] text-muted-foreground/40 font-ui text-center">
+            Default PIN: 123456 · Change in admin panel
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Grid Overlay ─────────────────────────────────────────────────────────────
 
 function GridOverlay({
@@ -810,8 +1025,15 @@ function GridOverlay({
   edition: any;
 }) {
   return (
-    <div className="fixed inset-0 z-50 bg-background/97 backdrop-blur-sm overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
+    // Click the dark backdrop (outside the panel) to close — same pattern as SourcesModal
+    <div
+      className="fixed inset-0 z-50 bg-background/97 backdrop-blur-sm overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="max-w-5xl mx-auto px-4 sm:px-6 py-6"
+        onClick={e => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>

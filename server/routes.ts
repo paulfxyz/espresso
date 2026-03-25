@@ -1,7 +1,7 @@
 /**
  * @file server/routes.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.2.6
+ * @version 3.2.7
  *
  * Cup of News — REST API Routes
  *
@@ -100,7 +100,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
    * Public. Used by uptime monitors, Docker HEALTHCHECK, GitHub Actions.
    */
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", version: "3.2.6" });
+    res.json({ status: "ok", version: "3.2.7" });
   });
 
   // ── Setup ──────────────────────────────────────────────────────────────────
@@ -291,6 +291,45 @@ export function registerRoutes(httpServer: Server, app: Express) {
    *
    * Note: if today's digest for this edition is already published, returns 409 Conflict.
    */
+
+  /**
+   * GET /api/admin/digest-pin
+   * Returns whether a digest PIN is configured (not the PIN itself).
+   * Used by DigestView to know if PIN auth is required before generating.
+   */
+  app.get("/api/admin/digest-pin/status", requireApiKey, (_req, res) => {
+    const pin = storage.getConfig("digest_pin");
+    res.json({ configured: !!pin });
+  });
+
+  /**
+   * POST /api/admin/digest-pin
+   * Set or update the digest generation PIN.
+   * Body: { pin: "123456" } — must be 4-8 digits.
+   */
+  app.post("/api/admin/digest-pin", requireApiKey, (req, res) => {
+    const { pin } = req.body || {};
+    if (!pin || !/^\d{4,8}$/.test(String(pin))) {
+      return res.status(400).json({ error: "PIN must be 4-8 digits." });
+    }
+    storage.setConfig("digest_pin", String(pin));
+    res.json({ success: true });
+  });
+
+  /**
+   * POST /api/admin/verify-pin
+   * Public endpoint — verifies the digest generation PIN without the admin key.
+   * Returns { valid: true/false }. Rate-limiting is handled by the 3-attempt
+   * lockout in the client (PinKeypad component).
+   * Body: { pin: "123456" }
+   */
+  app.post("/api/admin/verify-pin", (req, res) => {
+    const { pin } = req.body || {};
+    const stored = storage.getConfig("digest_pin") || "123456"; // default PIN
+    const valid = String(pin) === stored;
+    res.json({ valid });
+  });
+
   app.post("/api/digest/generate", requireApiKey, async (req, res) => {
     const apiKey = storage.getConfig("openrouter_key");
     if (!apiKey) {

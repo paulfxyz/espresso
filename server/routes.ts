@@ -1,7 +1,7 @@
 /**
  * @file server/routes.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.2.9
+ * @version 3.3.0
  *
  * Cup of News — REST API Routes
  *
@@ -100,7 +100,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
    * Public. Used by uptime monitors, Docker HEALTHCHECK, GitHub Actions.
    */
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", version: "3.2.9" });
+    res.json({ status: "ok", version: "3.3.0" });
   });
 
   // ── Setup ──────────────────────────────────────────────────────────────────
@@ -347,10 +347,42 @@ export function registerRoutes(httpServer: Server, app: Express) {
    * can poll /api/digest/latest for the new digest instead of holding a 90s connection.
    * This avoids the 502 timeout problem entirely.
    */
+  /**
+   * POST /api/digest/generate-with-pin  (v3.3.0)
+   *
+   * Server-Sent Events (SSE) streaming endpoint.
+   *
+   * Why SSE instead of a regular HTTP response:
+   *   The pipeline takes 30-170 seconds. A regular POST held open this long
+   *   gets killed by Fly.io's 75-second proxy idle timeout → 502 Bad Gateway.
+   *   SSE keeps the connection alive by sending periodic heartbeat events
+   *   (\"data: heartbeat\n\n\" every 10 seconds). Fly.io's idle timeout resets
+   *   on each data event, so the connection survives the full pipeline.
+   *
+   * Why not WebSockets:
+   *   SSE is unidirectional (server→client), which is exactly what we need.
+   *   No library required — plain HTTP/1.1 chunked transfer encoding.
+   *   Works through Fly.io's proxy without any special configuration.
+   *
+   * Protocol:
+   *   Client sends: POST { pin, edition }
+   *   Server streams:
+   *     data: {"type":"start","edition":"en"}
+   *     data: {"type":"progress","message":"Fetching RSS sources...","elapsed":3}
+   *     data: {"type":"heartbeat"}           ← every 10s to prevent proxy timeout
+   *     data: {"type":"done","digestId":42,"storiesCount":20}
+   *     data: {"type":"error","message":"..."}
+   *   Connection closes after done or error.
+   *
+   * Pre-generation unpublish:
+   *   If a published digest already exists for today/edition, we unpublish it
+   *   before running the pipeline. This allows re-generation on demand without
+   *   manual admin intervention. The old digest is replaced, not deleted.
+   */
   app.post("/api/digest/generate-with-pin", async (req, res) => {
     const { pin, edition: editionId = "en" } = req.body || {};
 
-    // Verify PIN
+    // ── Auth ────────────────────────────────────────────────────────────────
     const storedPin = storage.getConfig("digest_pin") || "123456";
     if (String(pin) !== storedPin) {
       return res.status(401).json({ error: "Invalid PIN." });
@@ -361,23 +393,61 @@ export function registerRoutes(httpServer: Server, app: Express) {
       return res.status(400).json({ error: "OpenRouter API key not configured." });
     }
 
-    // Respond immediately — client will poll for the new digest
-    res.json({ success: true, message: "Generation started", edition: editionId });
+    // ── Set up SSE stream ────────────────────────────────────────────────────
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // disable nginx buffering
+    res.flushHeaders();
 
-    // Run pipeline async, then auto-publish the result
-    runDailyPipeline(apiKey, editionId)
-      .then(result => {
-        console.log(`[PIN generate] ${editionId}: digest ${result.digestId} created, ${result.storiesCount} stories — auto-publishing`);
-        // Auto-publish so the client poll can find it immediately
-        storage.updateDigest(result.digestId, {
-          status: "published",
-          publishedAt: new Date().toISOString(),
-        });
-        console.log(`[PIN generate] ${editionId}: digest ${result.digestId} published`);
-      })
-      .catch(err => {
-        console.error(`[PIN generate] ${editionId} failed:`, err.message);
+    const send = (data: object) => {
+      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch {}
+    };
+
+    // Heartbeat every 10s — keeps Fly.io proxy alive (resets 75s idle timer)
+    const heartbeat = setInterval(() => send({ type: "heartbeat" }), 10_000);
+
+    const startMs = Date.now();
+    const elapsed = () => Math.floor((Date.now() - startMs) / 1000);
+
+    send({ type: "start", edition: editionId });
+
+    try {
+      // ── Pre-generation: unpublish existing digest for today if any ─────────
+      const today = new Date().toISOString().slice(0, 10);
+      const existing = storage.getDigestByDate(today, editionId);
+      if (existing?.status === "published") {
+        send({ type: "progress", message: "Unpublishing existing digest for re-generation…", elapsed: elapsed() });
+        storage.updateDigest(existing.id, { status: "draft", publishedAt: null });
+        console.log(`[PIN generate] Unpublished existing ${editionId} digest #${existing.id} for re-generation`);
+      }
+
+      send({ type: "progress", message: "Fetching RSS sources and running AI pipeline…", elapsed: elapsed() });
+
+      // ── Run pipeline ───────────────────────────────────────────────────────
+      const result = await runDailyPipeline(apiKey, editionId);
+      const elapsed2 = elapsed();
+
+      send({ type: "progress", message: "Publishing digest…", elapsed: elapsed2 });
+
+      // Auto-publish
+      storage.updateDigest(result.digestId, {
+        status: "published",
+        publishedAt: new Date().toISOString(),
       });
+
+      clearInterval(heartbeat);
+      send({ type: "done", digestId: result.digestId, storiesCount: result.storiesCount, elapsed: elapsed2 });
+      console.log(`[PIN generate] ${editionId}: digest ${result.digestId} done in ${elapsed2}s, ${result.storiesCount} stories, published`);
+
+    } catch (err: any) {
+      clearInterval(heartbeat);
+      const msg = err?.message || "Unknown error";
+      send({ type: "error", message: msg });
+      console.error(`[PIN generate] ${editionId} failed after ${elapsed()}s:`, msg);
+    } finally {
+      res.end();
+    }
   });
 
   app.post("/api/digest/generate", requireApiKey, async (req, res) => {
@@ -389,6 +459,15 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
 
     const edition = (req.body?.edition as string) || "en";
+
+    // Auto-unpublish existing published digest for today so we can regenerate
+    // without requiring the user to manually unpublish first (v3.3.0)
+    const today = new Date().toISOString().slice(0, 10);
+    const existing = storage.getDigestByDate(today, edition);
+    if (existing?.status === "published") {
+      console.log(`[generate] Auto-unpublishing ${edition} digest #${existing.id} for re-generation`);
+      storage.updateDigest(existing.id, { status: "draft", publishedAt: null });
+    }
 
     // ── Request-level timeout guard (v3.2.5) ──────────────────────────────
     // The pipeline can take 30-90s. Without an explicit socket timeout,

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-3.2.9-red?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-3.3.0-red?style=for-the-badge)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
 ![Node.js](https://img.shields.io/badge/Node.js-20+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
@@ -523,6 +523,7 @@ Full history with engineering narrative: **[CHANGELOG.md](./CHANGELOG.md)**
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **3.3.0** | 2026-03-25 | SSE streaming generate, auto-unpublish before regenerate, definitive PIN keypad fix |
 | **3.2.9** | 2026-03-25 | Fix generate-with-pin auto-publish, fix polling (ID-based not date-based), fix admin panel generate polling |
 | **3.2.8** | 2026-03-25 | Fix PIN keypad (6 dots, PIN-only auth, polling), fix admin generate (async fire-and-forget + poll) |
 | **3.2.7** | 2026-03-25 | PIN keypad for digest generation (triple-tap logo), click-outside grid/modal, admin PIN settings |
@@ -553,7 +554,7 @@ Full history with engineering narrative: **[CHANGELOG.md](./CHANGELOG.md)**
 
 ## 🗺️ Roadmap
 
-**v3.2.9 shipped.** PIN keypad for digest generation (triple-tap logo), click-outside for All Stories grid, admin PIN settings, 222 RSS sources, Read Again button, QuoteCard theme-aware design, persistent admin login, landing→app language handoff, 502 timeout fix.
+**v3.3.0 shipped.** PIN keypad for digest generation (triple-tap logo), click-outside for All Stories grid, admin PIN settings, 222 RSS sources, Read Again button, QuoteCard theme-aware design, persistent admin login, landing→app language handoff, 502 timeout fix.
 
 ### v3.2 — Delivery & Channels
 - 📧 Email delivery (Postmark / Resend) — digest in your inbox at 6 AM

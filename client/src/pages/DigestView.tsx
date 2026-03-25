@@ -1,7 +1,7 @@
 /**
  * @file client/src/pages/DigestView.tsx
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.2.9
+ * @version 3.3.0
  *
  * Cup of News — Public Digest Reader
  *
@@ -766,20 +766,25 @@ function QuoteCard({ quote, author, date, label = "Today's Thought", refreshLabe
 
 function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) {
   // ── State ──────────────────────────────────────────────────────────────────
-  const [digits,     setDigits]     = useState<string[]>([]);
-  const [shake,      setShake]      = useState(false);
-  const [attempts,   setAttempts]   = useState(0);
-  const [locked,     setLocked]     = useState(false);
-  const [lockSecs,   setLockSecs]   = useState(0);
-  const [phase,      setPhase]      = useState<"pin" | "generating" | "polling" | "done" | "error">("pin");
-  const [genSecs,    setGenSecs]    = useState(0);
-  const [errorMsg,   setErrorMsg]   = useState("");
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [digits,   setDigits]   = useState<string[]>([]);
+  const [shake,    setShake]    = useState(false);
+  const [attempts, setAttempts] = useState(0);
+  const [locked,   setLocked]   = useState(false);
+  const [lockSecs, setLockSecs] = useState(0);
+  const [phase,    setPhase]    = useState<"pin"|"running"|"done"|"error">("pin");
+  const [status,   setStatus]   = useState("Starting…");
+  const [elapsed,  setElapsed]  = useState(0);
+  const [stories,  setStories]  = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const esRef    = useRef<EventSource|null>(null);
 
   // Cleanup on unmount
-  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (esRef.current)    esRef.current.close();
+  }, []);
 
-  // ── Lockout countdown ─────────────────────────────────────────────────────
+  // Lockout countdown
   useEffect(() => {
     if (!locked) return;
     const t = setInterval(() => {
@@ -791,144 +796,138 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
     return () => clearInterval(t);
   }, [locked]);
 
-  // ── Generation elapsed counter ────────────────────────────────────────────
-  const startGenTimer = () => {
+  // Elapsed counter while running
+  const startTimer = () => {
     let s = 0;
-    timerRef.current = setInterval(() => { s += 1; setGenSecs(s); }, 1000);
+    timerRef.current = setInterval(() => { s++; setElapsed(s); }, 1000);
   };
-
-  const stopGenTimer = () => {
+  const stopTimer = () => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
   };
 
-  // ── Input handlers ────────────────────────────────────────────────────────
+  // ── Input ─────────────────────────────────────────────────────────────────
   const press = useCallback((d: string) => {
     if (locked || phase !== "pin") return;
-    setDigits(prev => prev.length < 8 ? [...prev, d] : prev);
+    setDigits(p => p.length < 8 ? [...p, d] : p);
   }, [locked, phase]);
 
-  const backspace = useCallback(() => {
+  const del = useCallback(() => {
     if (locked || phase !== "pin") return;
-    setDigits(prev => prev.slice(0, -1));
+    setDigits(p => p.slice(0, -1));
   }, [locked, phase]);
 
-  // ── Submit PIN ────────────────────────────────────────────────────────────
+  // ── Submit: verify PIN then open SSE stream ───────────────────────────────
   const submit = useCallback(async () => {
     if (locked || phase !== "pin" || digits.length < 4) return;
     const pin = digits.join("");
 
-    // 1. Verify PIN server-side
-    let valid = false;
+    // 1. Verify PIN
     try {
       const r = await fetch("/api/admin/verify-pin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pin }),
       });
-      const data = await r.json();
-      valid = !!data.valid;
+      const d = await r.json();
+      if (!d.valid) {
+        setShake(true); setDigits([]);
+        setTimeout(() => setShake(false), 500);
+        const next = attempts + 1; setAttempts(next);
+        if (next >= 3) { setLocked(true); setLockSecs(30); }
+        return;
+      }
     } catch {
-      setErrorMsg("Connection error. Try again.");
-      setDigits([]);
+      setPhase("error"); setStatus("Connection error. Try again.");
       return;
     }
 
-    if (!valid) {
-      setShake(true);
-      setDigits([]);
-      setTimeout(() => setShake(false), 500);
-      const next = attempts + 1;
-      setAttempts(next);
-      if (next >= 3) { setLocked(true); setLockSecs(30); }
-      return;
-    }
-
-    // 2. PIN correct — fire generate-with-pin (returns immediately, runs async)
-    setPhase("generating");
-    setGenSecs(0);
-    setErrorMsg("");
-    startGenTimer();
+    // 2. PIN correct — start SSE stream via fetch (EventSource doesn't support POST)
+    setPhase("running"); setStatus("Connecting…"); setElapsed(0); setStories(0);
+    startTimer();
 
     try {
-      const res = await fetch("/api/digest/generate-with-pin", {
+      // Use fetch + ReadableStream to consume SSE over POST
+      const resp = await fetch("/api/digest/generate-with-pin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pin, edition: edition.id }),
       });
 
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({}));
-        stopGenTimer();
-        setErrorMsg(e.error || "Generation failed. Try again.");
-        setPhase("error");
+      if (!resp.ok) {
+        stopTimer();
+        const e = await resp.json().catch(() => ({}));
+        setPhase("error"); setStatus(e.error || `Server error ${resp.status}`);
         return;
       }
 
-      // 3. Server acknowledged — poll /api/digest/latest until a fresh digest appears
-      setPhase("polling");
-      // Track the digest ID that existed BEFORE we started generating
-      // so we can detect when a NEW one appears (regardless of date/timezone)
-      let previousDigestId: number | null = null;
-      try {
-        const prev = await fetch(`/api/digest/latest?edition=${encodeURIComponent(edition.id)}`);
-        if (prev.ok) { const d = await prev.json(); previousDigestId = d?.id ?? null; }
-      } catch {}
+      // Read SSE stream line by line
+      const reader = resp.body!.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
 
-      let polls = 0;
-      const MAX_POLLS = 120; // 120 × 1s = 2 minutes max
-
-      const poll = setInterval(async () => {
-        polls += 1;
+      const processLine = (line: string) => {
+        if (!line.startsWith("data: ")) return;
         try {
-          const dr = await fetch(`/api/digest/latest?edition=${encodeURIComponent(edition.id)}`);
-          if (dr.ok) {
-            const data = await dr.json();
-            // A new digest appeared if its ID changed OR stories exist for today
-            const isNew = data && (
-              (data.id !== previousDigestId) ||
-              (data.stories?.length > 0 && data.date >= new Date().toISOString().slice(0, 10))
-            );
-            if (isNew && data.id !== previousDigestId) {
-              clearInterval(poll);
-              stopGenTimer();
+          const msg = JSON.parse(line.slice(6));
+          switch (msg.type) {
+            case "start":
+              setStatus(`Starting ${msg.edition} digest…`);
+              break;
+            case "progress":
+              setStatus(msg.message || "Generating…");
+              break;
+            case "heartbeat":
+              // keep-alive, no UI update needed
+              break;
+            case "done":
+              stopTimer();
+              setStories(msg.storiesCount || 20);
               setPhase("done");
-              setTimeout(() => window.location.reload(), 800);
-              return;
-            }
+              setStatus("Digest ready!");
+              setTimeout(() => window.location.reload(), 1200);
+              break;
+            case "error":
+              stopTimer();
+              setPhase("error");
+              setStatus(msg.message || "Generation failed.");
+              break;
           }
-        } catch { /* keep polling */ }
+        } catch {}
+      };
 
-        if (polls >= MAX_POLLS) {
-          clearInterval(poll);
-          stopGenTimer();
-          // 2 min elapsed — reload anyway, digest is likely ready
-          setTimeout(() => window.location.reload(), 500);
-        }
-      }, 1000);
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) processLine(line.trim());
+      }
+      // Process any remaining buffer
+      if (buf) processLine(buf.trim());
 
-    } catch {
-      stopGenTimer();
-      setErrorMsg("Network error. Try again.");
+    } catch (err: any) {
+      stopTimer();
       setPhase("error");
+      setStatus(err?.message || "Network error. Try again.");
     }
   }, [locked, phase, digits, attempts, edition.id]);
 
-  // ── Keyboard ──────────────────────────────────────────────────────────────
+  // Keyboard
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    const h = (e: KeyboardEvent) => {
       if (e.key >= "0" && e.key <= "9") press(e.key);
-      else if (e.key === "Backspace") backspace();
+      else if (e.key === "Backspace") del();
       else if (e.key === "Enter") submit();
       else if (e.key === "Escape" && phase === "pin") onClose();
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [press, backspace, submit, phase, onClose]);
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [press, del, submit, phase, onClose]);
 
-  // ── Render ────────────────────────────────────────────────────────────────
-  const KEYS = [["1","2","3"],["4","5","6"],["7","8","9"]];
-  const PIN_LENGTH = 6; // default PIN is 123456 — show 6 dots
-  const dotCount = Math.max(digits.length, PIN_LENGTH);
+  const ROWS = [["1","2","3"],["4","5","6"],["7","8","9"]];
+  const DOT_COUNT = Math.max(digits.length, 6);
 
   return (
     <div
@@ -950,10 +949,8 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
             </p>
           </div>
           {phase === "pin" && (
-            <button
-              onClick={onClose}
-              className="w-8 h-8 flex items-center justify-center hover:bg-accent rounded text-muted-foreground hover:text-foreground"
-            >
+            <button onClick={onClose}
+              className="w-8 h-8 flex items-center justify-center hover:bg-accent rounded text-muted-foreground hover:text-foreground">
               <X size={14} />
             </button>
           )}
@@ -961,86 +958,51 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
 
         <div className="px-5 py-5 space-y-4">
 
-          {/* ── PIN entry phase ─────────────────────────────────────────── */}
+          {/* PIN entry */}
           {phase === "pin" && (
             <>
-              {/* Dot display — always shows PIN_LENGTH dots minimum */}
               <div className={`flex justify-center gap-2.5 py-2 ${shake ? "animate-[pin-shake_0.4s_ease]" : ""}`}>
                 <style>{`
                   @keyframes pin-shake {
-                    0%,100%{ transform:translateX(0) }
-                    20%{ transform:translateX(-8px) }
-                    40%{ transform:translateX(8px) }
-                    60%{ transform:translateX(-5px) }
-                    80%{ transform:translateX(5px) }
+                    0%,100%{transform:translateX(0)}
+                    20%{transform:translateX(-8px)}
+                    40%{transform:translateX(8px)}
+                    60%{transform:translateX(-5px)}
+                    80%{transform:translateX(5px)}
                   }
                 `}</style>
-                {Array.from({ length: dotCount }).map((_, i) => (
-                  <div
-                    key={i}
-                    className={`w-3 h-3 rounded-full border-2 transition-all duration-150 ${
-                      i < digits.length
-                        ? "bg-[#E3120B] border-[#E3120B] scale-110"
-                        : "bg-transparent border-border"
-                    }`}
-                  />
+                {Array.from({length: DOT_COUNT}).map((_,i) => (
+                  <div key={i} className={`w-3 h-3 rounded-full border-2 transition-all duration-150 ${
+                    i < digits.length ? "bg-[#E3120B] border-[#E3120B] scale-110" : "bg-transparent border-border"
+                  }`}/>
                 ))}
               </div>
-
-              {/* Lockout or error message */}
-              {locked && (
-                <p className="text-center text-xs text-amber-500 font-ui">
-                  Too many attempts — wait {lockSecs}s
-                </p>
-              )}
-              {errorMsg && !locked && (
-                <p className="text-center text-xs text-[#E3120B] font-ui">{errorMsg}</p>
-              )}
-              {!locked && !errorMsg && attempts > 0 && (
-                <p className="text-center text-xs text-muted-foreground font-ui">
-                  Wrong PIN — {3 - attempts} attempt{3 - attempts !== 1 ? "s" : ""} left
-                </p>
-              )}
-
-              {/* Numpad */}
+              {locked && <p className="text-center text-xs text-amber-500 font-ui">Too many attempts — wait {lockSecs}s</p>}
+              {!locked && attempts > 0 && <p className="text-center text-xs text-muted-foreground font-ui">Wrong PIN · {3 - attempts} attempt{3 - attempts !== 1 ? "s" : ""} left</p>}
               <div className="space-y-1.5">
-                {KEYS.map(row => (
+                {ROWS.map(row => (
                   <div key={row[0]} className="grid grid-cols-3 gap-1.5">
                     {row.map(k => (
-                      <button
-                        key={k}
-                        onClick={() => press(k)}
-                        disabled={locked}
-                        className="h-13 py-3 bg-accent hover:bg-accent/70 active:bg-accent/50 text-foreground font-bold text-xl font-ui transition-colors disabled:opacity-30 active:scale-95 select-none"
-                      >
+                      <button key={k} onClick={() => press(k)} disabled={locked}
+                        className="py-3.5 bg-accent hover:bg-accent/70 active:bg-accent/50 text-foreground font-bold text-xl font-ui transition-colors disabled:opacity-30 select-none">
                         {k}
                       </button>
                     ))}
                   </div>
                 ))}
-                {/* Bottom row: backspace | 0 | OK */}
                 <div className="grid grid-cols-3 gap-1.5">
-                  <button
-                    onClick={backspace}
-                    disabled={locked || digits.length === 0}
-                    className="py-3 bg-accent hover:bg-accent/70 text-muted-foreground transition-colors disabled:opacity-30 flex items-center justify-center active:scale-95"
-                  >
+                  <button onClick={del} disabled={locked || digits.length === 0}
+                    className="py-3.5 bg-accent hover:bg-accent/70 text-muted-foreground transition-colors disabled:opacity-30 flex items-center justify-center">
                     <svg width="18" height="14" viewBox="0 0 18 14" fill="none">
                       <path d="M6 1L1 7l5 6M1 7h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
                   </button>
-                  <button
-                    onClick={() => press("0")}
-                    disabled={locked}
-                    className="py-3 bg-accent hover:bg-accent/70 active:bg-accent/50 text-foreground font-bold text-xl font-ui transition-colors disabled:opacity-30 active:scale-95 select-none"
-                  >
+                  <button onClick={() => press("0")} disabled={locked}
+                    className="py-3.5 bg-accent hover:bg-accent/70 active:bg-accent/50 text-foreground font-bold text-xl font-ui transition-colors disabled:opacity-30 select-none">
                     0
                   </button>
-                  <button
-                    onClick={submit}
-                    disabled={locked || digits.length < 4}
-                    className="py-3 bg-[#E3120B] hover:bg-[#B50D08] active:bg-[#900A06] text-white font-bold text-sm font-ui transition-colors disabled:opacity-30 active:scale-95 uppercase tracking-wider"
-                  >
+                  <button onClick={submit} disabled={locked || digits.length < 4}
+                    className="py-3.5 bg-[#E3120B] hover:bg-[#B50D08] text-white font-bold text-sm font-ui transition-colors disabled:opacity-30 uppercase tracking-wider">
                     OK
                   </button>
                 </div>
@@ -1048,50 +1010,46 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
             </>
           )}
 
-          {/* ── Generating / polling phase ──────────────────────────────── */}
-          {(phase === "generating" || phase === "polling") && (
-            <div className="py-6 text-center space-y-4">
+          {/* Running */}
+          {phase === "running" && (
+            <div className="py-8 text-center space-y-4">
               <Loader2 size={32} className="text-[#E3120B] animate-spin mx-auto" />
-              <div className="space-y-1">
-                <p className="text-sm font-bold font-ui text-foreground">
-                  {phase === "generating" ? "Starting pipeline…" : "Generating digest…"}
-                </p>
-                <p className="text-xs text-muted-foreground font-ui">
-                  {edition.flag} {edition.name} · {genSecs}s
-                </p>
-                <p className="text-[10px] text-muted-foreground/50 font-ui mt-2">
-                  This takes 30–90 seconds. Don't close this window.
+              <div>
+                <p className="text-sm font-bold font-ui text-foreground">{status}</p>
+                <p className="text-xs text-muted-foreground font-ui mt-1">{elapsed}s elapsed</p>
+                <p className="text-[10px] text-muted-foreground/40 font-ui mt-3">
+                  Generation takes 30–120s. Stay on this page.
                 </p>
               </div>
             </div>
           )}
 
-          {/* ── Done phase ──────────────────────────────────────────────── */}
+          {/* Done */}
           {phase === "done" && (
-            <div className="py-6 text-center space-y-3">
-              <div className="w-10 h-10 bg-[#E3120B] flex items-center justify-center mx-auto">
-                <span className="text-white text-lg">✓</span>
+            <div className="py-8 text-center space-y-3">
+              <div className="w-12 h-12 bg-[#E3120B] flex items-center justify-center mx-auto">
+                <span className="text-white text-2xl font-bold">✓</span>
               </div>
-              <p className="text-sm font-bold font-ui text-foreground">Digest ready!</p>
+              <p className="text-sm font-bold font-ui">
+                {stories} stories ready · {elapsed}s
+              </p>
               <p className="text-xs text-muted-foreground font-ui">Reloading…</p>
             </div>
           )}
 
-          {/* ── Error phase ─────────────────────────────────────────────── */}
+          {/* Error */}
           {phase === "error" && (
-            <div className="py-4 text-center space-y-4">
-              <p className="text-xs text-[#E3120B] font-ui">{errorMsg}</p>
-              <button
-                onClick={() => { setPhase("pin"); setErrorMsg(""); setDigits([]); }}
-                className="px-4 py-2 border border-border text-xs font-bold font-ui hover:bg-accent transition-colors"
-              >
+            <div className="py-6 text-center space-y-4">
+              <p className="text-xs text-[#E3120B] font-ui px-2">{status}</p>
+              <button onClick={() => { setPhase("pin"); setDigits([]); setAttempts(0); }}
+                className="px-4 py-2 border border-border text-xs font-bold font-ui hover:bg-accent transition-colors">
                 Try again
               </button>
             </div>
           )}
         </div>
 
-        <div className="px-5 pb-4 border-t border-border/50 pt-3">
+        <div className="px-5 pb-4 border-t border-border/50 pt-2.5">
           <p className="text-[9px] text-muted-foreground/40 font-ui text-center">
             Default PIN: 123456 · Change in admin panel → Overview
           </p>

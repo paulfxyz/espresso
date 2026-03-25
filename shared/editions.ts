@@ -1,7 +1,7 @@
 /**
  * @file shared/editions.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.2.9
+ * @version 3.3.0
  *
  * Cup of News — Edition Registry
  *

@@ -1,3 +1,66 @@
+## [3.3.0] — 2026-03-25
+
+**Definitive fix for digest generation. SSE streaming. Auto-unpublish. No more 502.**
+
+### Root cause (final analysis)
+
+Two separate bugs combined to make generation appear completely broken:
+
+**Bug 1 — Pipeline 409 block (critical):**
+The pipeline checks if a published digest already exists for today/edition and
+throws `"Published digest already exists"` if so. Digest #36 (en, 2026-03-25)
+was already published. Every call to generate-with-pin ran the pipeline, which
+immediately threw 409 silently in the async catch block. Nothing happened.
+
+Fix: both `generate-with-pin` and `/api/digest/generate` now call
+`storage.updateDigest(existing.id, { status: "draft", publishedAt: null })`
+before running the pipeline, whenever a published digest for today exists.
+Regeneration is now always possible without manual admin intervention.
+
+**Bug 2 — 502 proxy timeout (persistent):**
+Fly.io's HTTP proxy times out idle connections at 75 seconds. The pipeline takes
+30-170 seconds. Regular HTTP responses held open this long die at the proxy,
+returning 502 to the client even though the server completed successfully.
+
+Previous attempts to fix this with keepAliveTimeout and res.setTimeout addressed
+the Node.js side but not the Fly.io proxy idle timeout, which resets only when
+data is written to the response.
+
+Fix: Server-Sent Events (SSE). The `generate-with-pin` endpoint now streams
+progress events to the client:
+  - `type: "start"` — immediately on connect
+  - `type: "progress"` — status messages during pipeline
+  - `type: "heartbeat"` — empty event every 10s (resets Fly proxy 75s timer)
+  - `type: "done"` — on success with digestId and storiesCount
+  - `type: "error"` — on failure with message
+
+The client reads the SSE stream via `fetch() + ReadableStream + getReader()`
+(EventSource doesn't support POST). Each data chunk is decoded and parsed
+line-by-line. The connection stays alive indefinitely because the heartbeat
+keeps the proxy's idle timer from expiring.
+
+**Why SSE beats the alternatives:**
+- WebSockets: bidirectional, needs library, more complex proxy config
+- Long-polling: still has the 75s timeout problem
+- Short-timeout + polling: race conditions, extra requests, misses errors
+- SSE: standard HTTP, unidirectional, heartbeat keeps proxy alive, works
+  through Fly.io without any special config
+
+### Changes
+
+**server/routes.ts:**
+  - `POST /api/digest/generate-with-pin`: rewritten as SSE endpoint
+  - `POST /api/digest/generate`: auto-unpublish before regenerating
+
+**client/src/pages/DigestView.tsx (PinKeypad):**
+  - Uses `fetch() + ReadableStream` to consume SSE stream
+  - 4 phases: pin / running / done / error
+  - Running phase: real-time status messages + elapsed seconds
+  - Done phase: story count + checkmark + auto-reload after 1.2s
+  - Heartbeat events ignored silently (keep-alive only)
+
+---
+
 ## [3.2.9] — 2026-03-25
 
 **Critical fix: generate-with-pin now auto-publishes. Polling uses digest ID comparison.**

@@ -1,3 +1,41 @@
+## [3.3.1] — 2026-03-25
+
+**Job-based SSE with native EventSource. Progress bar. Log textarea. Copy button.**
+
+### Why fetch+ReadableStream was wrong (3.3.0)
+
+The browser buffers `fetch()` response bodies. Even with SSE headers, Chrome/Safari
+hold the entire response in memory and don't deliver chunks to JS until the connection
+closes or the buffer flushes. This is by design for security (CORB) and performance.
+The result: the PinKeypad appeared frozen for 2+ minutes, then everything arrived at once.
+
+### The fix: two-step job + native EventSource
+
+Step 1 — POST /api/digest/start-job { pin, edition }
+  Returns immediately with { jobId } (~50ms)
+
+Step 2 — new EventSource("/api/digest/job/JOB_ID/stream")
+  Native GET SSE — EventSource is the browser's purpose-built API for this.
+  It processes chunks as they arrive, no buffering.
+  The server streams: start → progress (with step/total) → heartbeat → done|error.
+  Heartbeats every 10s keep Fly.io's proxy alive.
+
+### New UI features (as requested)
+
+Progress bar:
+  Shows step N of 5 with percentage. Fills smoothly via CSS transition.
+
+Log textarea:
+  Every event (start, progress, heartbeat, done, error) is appended to a log.
+  Auto-scrolls. Shows timestamps. Visible in running/done/error phases.
+
+Copy button:
+  Copies full log to clipboard. Shows '✓ Copied' for 2s.
+
+Modal widens during running/done/error to accommodate the log textarea.
+
+---
+
 ## [3.3.0] — 2026-03-25
 
 **Definitive fix for digest generation. SSE streaming. Auto-unpublish. No more 502.**

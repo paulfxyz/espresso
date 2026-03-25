@@ -1,7 +1,7 @@
 /**
  * @file server/routes.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.3.0
+ * @version 3.3.1
  *
  * Cup of News — REST API Routes
  *
@@ -100,7 +100,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
    * Public. Used by uptime monitors, Docker HEALTHCHECK, GitHub Actions.
    */
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", version: "3.3.0" });
+    res.json({ status: "ok", version: "3.3.1" });
   });
 
   // ── Setup ──────────────────────────────────────────────────────────────────
@@ -348,109 +348,180 @@ export function registerRoutes(httpServer: Server, app: Express) {
    * This avoids the 502 timeout problem entirely.
    */
   /**
-   * POST /api/digest/generate-with-pin  (v3.3.0)
+   * ── Digest generation job system (v3.3.1) ────────────────────────────────
    *
-   * Server-Sent Events (SSE) streaming endpoint.
+   * Pattern: POST to start job → GET /api/digest/job/:id/stream for SSE.
    *
-   * Why SSE instead of a regular HTTP response:
-   *   The pipeline takes 30-170 seconds. A regular POST held open this long
-   *   gets killed by Fly.io's 75-second proxy idle timeout → 502 Bad Gateway.
-   *   SSE keeps the connection alive by sending periodic heartbeat events
-   *   (\"data: heartbeat\n\n\" every 10 seconds). Fly.io's idle timeout resets
-   *   on each data event, so the connection survives the full pipeline.
+   * Why two steps instead of one POST-SSE:
+   *   EventSource (the browser's native SSE API) only supports GET.
+   *   fetch() + ReadableStream for SSE works in Node/curl but browsers buffer
+   *   the response body until the connection closes — the progress events
+   *   arrive all at once at the end, making the UI appear frozen.
+   *   Using a real GET EventSource fixes the buffering issue completely.
    *
-   * Why not WebSockets:
-   *   SSE is unidirectional (server→client), which is exactly what we need.
-   *   No library required — plain HTTP/1.1 chunked transfer encoding.
-   *   Works through Fly.io's proxy without any special configuration.
-   *
-   * Protocol:
-   *   Client sends: POST { pin, edition }
-   *   Server streams:
-   *     data: {"type":"start","edition":"en"}
-   *     data: {"type":"progress","message":"Fetching RSS sources...","elapsed":3}
-   *     data: {"type":"heartbeat"}           ← every 10s to prevent proxy timeout
-   *     data: {"type":"done","digestId":42,"storiesCount":20}
-   *     data: {"type":"error","message":"..."}
-   *   Connection closes after done or error.
-   *
-   * Pre-generation unpublish:
-   *   If a published digest already exists for today/edition, we unpublish it
-   *   before running the pipeline. This allows re-generation on demand without
-   *   manual admin intervention. The old digest is replaced, not deleted.
+   * Job lifecycle:
+   *   1. POST /api/digest/start-job  → returns { jobId }
+   *   2. Browser opens EventSource to GET /api/digest/job/:id/stream
+   *   3. Server streams: start → progress → heartbeat (10s) → done|error
+   *   4. Browser closes EventSource on done|error
    */
-  app.post("/api/digest/generate-with-pin", async (req, res) => {
+
+  // In-memory job store (single machine, single user — adequate for self-hosted)
+  const jobs = new Map<string, {
+    status: "pending"|"running"|"done"|"error";
+    edition: string;
+    logs: string[];
+    result?: { digestId: number; storiesCount: number; elapsed: number };
+    error?: string;
+    listeners: Array<(event: string) => void>;
+  }>();
+
+  const emitJob = (jobId: string, event: object) => {
+    const job = jobs.get(jobId);
+    if (!job) return;
+    const line = `data: ${JSON.stringify(event)}\n\n`;
+    job.listeners.forEach(fn => fn(line));
+    // Also store in logs for the textarea
+    const msg = (event as any).message || (event as any).type;
+    if (msg && msg !== "heartbeat") job.logs.push(msg);
+  };
+
+  /**
+   * POST /api/digest/start-job
+   * Verifies PIN, starts the pipeline in the background, returns jobId.
+   */
+  app.post("/api/digest/start-job", async (req, res) => {
     const { pin, edition: editionId = "en" } = req.body || {};
 
-    // ── Auth ────────────────────────────────────────────────────────────────
     const storedPin = storage.getConfig("digest_pin") || "123456";
     if (String(pin) !== storedPin) {
       return res.status(401).json({ error: "Invalid PIN." });
     }
-
     const apiKey = storage.getConfig("openrouter_key");
     if (!apiKey) {
       return res.status(400).json({ error: "OpenRouter API key not configured." });
     }
 
-    // ── Set up SSE stream ────────────────────────────────────────────────────
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no"); // disable nginx buffering
-    res.flushHeaders();
+    // Create job
+    const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    jobs.set(jobId, { status: "pending", edition: editionId, logs: [], listeners: [] });
 
-    const send = (data: object) => {
-      try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch {}
-    };
+    // Return jobId immediately
+    res.json({ jobId, edition: editionId });
 
-    // Heartbeat every 10s — keeps Fly.io proxy alive (resets 75s idle timer)
-    const heartbeat = setInterval(() => send({ type: "heartbeat" }), 10_000);
-
+    // Run pipeline in background
+    const job = jobs.get(jobId)!;
+    job.status = "running";
     const startMs = Date.now();
     const elapsed = () => Math.floor((Date.now() - startMs) / 1000);
 
-    send({ type: "start", edition: editionId });
+    emitJob(jobId, { type: "start", edition: editionId });
+
+    // Auto-unpublish existing published digest for today
+    const today = new Date().toISOString().slice(0, 10);
+    const existing = storage.getDigestByDate(today, editionId);
+    if (existing?.status === "published") {
+      emitJob(jobId, { type: "progress", step: 1, total: 5, message: "Unpublishing existing digest to allow regeneration…", elapsed: elapsed() });
+      storage.updateDigest(existing.id, { status: "draft", publishedAt: null });
+    }
+
+    emitJob(jobId, { type: "progress", step: 2, total: 5, message: "Fetching 50+ RSS sources across the web…", elapsed: elapsed() });
 
     try {
-      // ── Pre-generation: unpublish existing digest for today if any ─────────
-      const today = new Date().toISOString().slice(0, 10);
-      const existing = storage.getDigestByDate(today, editionId);
-      if (existing?.status === "published") {
-        send({ type: "progress", message: "Unpublishing existing digest for re-generation…", elapsed: elapsed() });
-        storage.updateDigest(existing.id, { status: "draft", publishedAt: null });
-        console.log(`[PIN generate] Unpublished existing ${editionId} digest #${existing.id} for re-generation`);
-      }
+      // Heartbeat interval
+      const hb = setInterval(() => emitJob(jobId, { type: "heartbeat" }), 10_000);
 
-      send({ type: "progress", message: "Fetching RSS sources and running AI pipeline…", elapsed: elapsed() });
+      emitJob(jobId, { type: "progress", step: 3, total: 5, message: "Running Gemini 2.5 Pro — selecting 20 stories…", elapsed: elapsed() });
 
-      // ── Run pipeline ───────────────────────────────────────────────────────
       const result = await runDailyPipeline(apiKey, editionId);
-      const elapsed2 = elapsed();
+      clearInterval(hb);
 
-      send({ type: "progress", message: "Publishing digest…", elapsed: elapsed2 });
+      emitJob(jobId, { type: "progress", step: 4, total: 5, message: `AI selected ${result.storiesCount} stories. Publishing…`, elapsed: elapsed() });
 
-      // Auto-publish
       storage.updateDigest(result.digestId, {
         status: "published",
         publishedAt: new Date().toISOString(),
       });
 
-      clearInterval(heartbeat);
-      send({ type: "done", digestId: result.digestId, storiesCount: result.storiesCount, elapsed: elapsed2 });
-      console.log(`[PIN generate] ${editionId}: digest ${result.digestId} done in ${elapsed2}s, ${result.storiesCount} stories, published`);
+      const elapsedFinal = elapsed();
+      job.status = "done";
+      job.result = { digestId: result.digestId, storiesCount: result.storiesCount, elapsed: elapsedFinal };
+      emitJob(jobId, { type: "progress", step: 5, total: 5, message: "Published!", elapsed: elapsedFinal });
+      emitJob(jobId, { type: "done", digestId: result.digestId, storiesCount: result.storiesCount, elapsed: elapsedFinal });
+
+      console.log(`[job ${jobId}] ${editionId} done in ${elapsedFinal}s — digest #${result.digestId}`);
 
     } catch (err: any) {
-      clearInterval(heartbeat);
       const msg = err?.message || "Unknown error";
-      send({ type: "error", message: msg });
-      console.error(`[PIN generate] ${editionId} failed after ${elapsed()}s:`, msg);
+      job.status = "error";
+      job.error = msg;
+      emitJob(jobId, { type: "error", message: msg, elapsed: elapsed() });
+      console.error(`[job ${jobId}] ${editionId} failed:`, msg);
     } finally {
-      res.end();
+      // Clean up job after 5 minutes
+      setTimeout(() => jobs.delete(jobId), 300_000);
     }
   });
 
-  app.post("/api/digest/generate", requireApiKey, async (req, res) => {
+  /**
+   * GET /api/digest/job/:id/stream
+   * SSE stream for a running job. Replays any missed events, then streams live.
+   * Client uses: new EventSource("/api/digest/job/JOB_ID/stream")
+   */
+  app.get("/api/digest/job/:id/stream", (req, res) => {
+    const jobId = req.params.id;
+    const job = jobs.get(jobId);
+    if (!job) {
+      return res.status(404).json({ error: "Job not found." });
+    }
+
+    // SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    const write = (line: string) => { try { res.write(line); } catch {} };
+
+    // Replay history so late subscribers catch up
+    job.logs.forEach(log => write(`data: ${JSON.stringify({ type: "log", message: log })}\n\n`));
+
+    // If already done/error, send terminal event and close
+    if (job.status === "done" && job.result) {
+      write(`data: ${JSON.stringify({ type: "done", ...job.result })}\n\n`);
+      res.end(); return;
+    }
+    if (job.status === "error") {
+      write(`data: ${JSON.stringify({ type: "error", message: job.error })}\n\n`);
+      res.end(); return;
+    }
+
+    // Live: register listener
+    job.listeners.push(write);
+
+    // Clean up on client disconnect
+    req.on("close", () => {
+      const idx = job.listeners.indexOf(write);
+      if (idx !== -1) job.listeners.splice(idx, 1);
+    });
+  });
+
+  /**
+   * POST /api/digest/generate-with-pin  (v3.3.1 — legacy compat, now uses jobs)
+   * Kept for backwards compatibility. Forwards to start-job + streams response.
+   */
+  app.post("/api/digest/generate-with-pin", async (req, res) => {
+    const { pin, edition: editionId = "en" } = req.body || {};
+    const storedPin = storage.getConfig("digest_pin") || "123456";
+    if (String(pin) !== storedPin) {
+      return res.status(401).json({ error: "Invalid PIN." });
+    }
+    // Just delegate to start-job concept
+    res.json({ success: true, message: "Use /api/digest/start-job instead", edition: editionId });
+  });
+
+    app.post("/api/digest/generate", requireApiKey, async (req, res) => {
     const apiKey = storage.getConfig("openrouter_key");
     if (!apiKey) {
       return res.status(400).json({

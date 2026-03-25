@@ -1,7 +1,7 @@
 /**
  * @file client/src/pages/DigestView.tsx
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.3.0
+ * @version 3.3.1
  *
  * Cup of News — Public Digest Reader
  *
@@ -765,20 +765,26 @@ function QuoteCard({ quote, author, date, label = "Today's Thought", refreshLabe
 // Current PIN shown as ● dots with shake animation on wrong entry.
 
 function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) {
-  // ── State ──────────────────────────────────────────────────────────────────
+  // ── State ────────────────────────────────────────────────────────────────
   const [digits,   setDigits]   = useState<string[]>([]);
   const [shake,    setShake]    = useState(false);
   const [attempts, setAttempts] = useState(0);
   const [locked,   setLocked]   = useState(false);
   const [lockSecs, setLockSecs] = useState(0);
   const [phase,    setPhase]    = useState<"pin"|"running"|"done"|"error">("pin");
-  const [status,   setStatus]   = useState("Starting…");
   const [elapsed,  setElapsed]  = useState(0);
+  const [step,     setStep]     = useState(0);   // 0-5
+  const [total,    setTotal]    = useState(5);
+  const [status,   setStatus]   = useState("");
   const [stories,  setStories]  = useState(0);
+  const [logs,     setLogs]     = useState<string[]>([]);
+  const [copied,   setCopied]   = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
   const esRef    = useRef<EventSource|null>(null);
+  const logRef   = useRef<HTMLTextAreaElement|null>(null);
 
-  // Cleanup on unmount
+  // Cleanup
   useEffect(() => () => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (esRef.current)    esRef.current.close();
@@ -788,13 +794,15 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
   useEffect(() => {
     if (!locked) return;
     const t = setInterval(() => {
-      setLockSecs(s => {
-        if (s <= 1) { clearInterval(t); setLocked(false); setAttempts(0); return 0; }
-        return s - 1;
-      });
+      setLockSecs(s => { if (s <= 1) { clearInterval(t); setLocked(false); setAttempts(0); return 0; } return s - 1; });
     }, 1000);
     return () => clearInterval(t);
   }, [locked]);
+
+  // Auto-scroll logs
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [logs]);
 
   // Elapsed counter while running
   const startTimer = () => {
@@ -805,7 +813,9 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
   };
 
-  // ── Input ─────────────────────────────────────────────────────────────────
+  const addLog = (msg: string) => setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+
+  // ── Input ────────────────────────────────────────────────────────────────
   const press = useCallback((d: string) => {
     if (locked || phase !== "pin") return;
     setDigits(p => p.length < 8 ? [...p, d] : p);
@@ -816,16 +826,15 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
     setDigits(p => p.slice(0, -1));
   }, [locked, phase]);
 
-  // ── Submit: verify PIN then open SSE stream ───────────────────────────────
+  // ── Submit: verify PIN → POST start-job → open EventSource ───────────────
   const submit = useCallback(async () => {
     if (locked || phase !== "pin" || digits.length < 4) return;
     const pin = digits.join("");
 
-    // 1. Verify PIN
+    // Step 1: verify PIN
     try {
       const r = await fetch("/api/admin/verify-pin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pin }),
       });
       const d = await r.json();
@@ -837,82 +846,92 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
         return;
       }
     } catch {
-      setPhase("error"); setStatus("Connection error. Try again.");
+      setPhase("error"); setErrorMsg("Connection error — check your network.");
       return;
     }
 
-    // 2. PIN correct — start SSE stream via fetch (EventSource doesn't support POST)
-    setPhase("running"); setStatus("Connecting…"); setElapsed(0); setStories(0);
-    startTimer();
-
+    // Step 2: start job
+    let jobId: string;
     try {
-      // Use fetch + ReadableStream to consume SSE over POST
-      const resp = await fetch("/api/digest/generate-with-pin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const r = await fetch("/api/digest/start-job", {
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pin, edition: edition.id }),
       });
-
-      if (!resp.ok) {
-        stopTimer();
-        const e = await resp.json().catch(() => ({}));
-        setPhase("error"); setStatus(e.error || `Server error ${resp.status}`);
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        setPhase("error"); setErrorMsg(e.error || `Server error ${r.status}`);
         return;
       }
-
-      // Read SSE stream line by line
-      const reader = resp.body!.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-
-      const processLine = (line: string) => {
-        if (!line.startsWith("data: ")) return;
-        try {
-          const msg = JSON.parse(line.slice(6));
-          switch (msg.type) {
-            case "start":
-              setStatus(`Starting ${msg.edition} digest…`);
-              break;
-            case "progress":
-              setStatus(msg.message || "Generating…");
-              break;
-            case "heartbeat":
-              // keep-alive, no UI update needed
-              break;
-            case "done":
-              stopTimer();
-              setStories(msg.storiesCount || 20);
-              setPhase("done");
-              setStatus("Digest ready!");
-              setTimeout(() => window.location.reload(), 1200);
-              break;
-            case "error":
-              stopTimer();
-              setPhase("error");
-              setStatus(msg.message || "Generation failed.");
-              break;
-          }
-        } catch {}
-      };
-
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const line of lines) processLine(line.trim());
-      }
-      // Process any remaining buffer
-      if (buf) processLine(buf.trim());
-
-    } catch (err: any) {
-      stopTimer();
-      setPhase("error");
-      setStatus(err?.message || "Network error. Try again.");
+      const d = await r.json();
+      jobId = d.jobId;
+    } catch {
+      setPhase("error"); setErrorMsg("Failed to start generation job.");
+      return;
     }
-  }, [locked, phase, digits, attempts, edition.id]);
+
+    // Step 3: open EventSource (GET — no buffering issues)
+    setPhase("running"); setStatus("Connecting to server…"); setElapsed(0);
+    setStep(0); setLogs([]); setStories(0);
+    startTimer();
+    addLog(`Starting ${edition.name} digest generation…`);
+
+    const es = new EventSource(`/api/digest/job/${jobId}/stream`);
+    esRef.current = es;
+
+    es.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        switch (msg.type) {
+          case "start":
+            setStatus("Pipeline started…");
+            addLog(`Pipeline started for ${msg.edition}`);
+            break;
+          case "progress":
+            setStatus(msg.message || "Working…");
+            setStep(msg.step || 0);
+            setTotal(msg.total || 5);
+            addLog(msg.message || "…");
+            break;
+          case "log":
+            addLog(msg.message);
+            break;
+          case "heartbeat":
+            // keep-alive ping — no UI change, but log it subtly
+            addLog("⏳ Pipeline running…");
+            break;
+          case "done":
+            stopTimer();
+            setStories(msg.storiesCount || 20);
+            setStep(msg.total || 5);
+            setPhase("done");
+            setStatus("Digest ready!");
+            addLog(`✅ Done — ${msg.storiesCount} stories in ${msg.elapsed}s (digest #${msg.digestId})`);
+            es.close();
+            setTimeout(() => window.location.reload(), 1500);
+            break;
+          case "error":
+            stopTimer();
+            setPhase("error");
+            setErrorMsg(msg.message || "Generation failed.");
+            addLog(`❌ Error: ${msg.message}`);
+            es.close();
+            break;
+        }
+      } catch {}
+    };
+
+    es.onerror = () => {
+      // EventSource retries automatically — only error if phase is still running after a while
+      addLog("⚠️ Connection interrupted — retrying…");
+    };
+  }, [locked, phase, digits, attempts, edition.id, edition.name]);
+
+  // Copy logs
+  const copyLogs = () => {
+    navigator.clipboard.writeText(logs.join("\n")).then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   // Keyboard
   useEffect(() => {
@@ -928,6 +947,7 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
 
   const ROWS = [["1","2","3"],["4","5","6"],["7","8","9"]];
   const DOT_COUNT = Math.max(digits.length, 6);
+  const progressPct = total > 0 ? Math.min(100, Math.round((step / total) * 100)) : 0;
 
   return (
     <div
@@ -935,22 +955,19 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
       onClick={phase === "pin" ? onClose : undefined}
     >
       <div
-        className="bg-card border border-border w-full max-w-xs shadow-2xl"
+        className={`bg-card border border-border shadow-2xl w-full ${phase === "running" || phase === "done" || phase === "error" ? "max-w-sm" : "max-w-xs"}`}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="border-b-2 border-[#E3120B] px-5 py-4 flex items-center justify-between">
           <div>
             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#E3120B] font-ui">
-              Generate digest
+              {phase === "done" ? "Digest ready" : phase === "error" ? "Generation failed" : "Generate digest"}
             </p>
-            <p className="text-xs text-muted-foreground font-ui mt-0.5">
-              {edition.flag} {edition.name}
-            </p>
+            <p className="text-xs text-muted-foreground font-ui mt-0.5">{edition.flag} {edition.name}</p>
           </div>
           {phase === "pin" && (
-            <button onClick={onClose}
-              className="w-8 h-8 flex items-center justify-center hover:bg-accent rounded text-muted-foreground hover:text-foreground">
+            <button onClick={onClose} className="w-8 h-8 flex items-center justify-center hover:bg-accent rounded text-muted-foreground hover:text-foreground">
               <X size={14} />
             </button>
           )}
@@ -958,23 +975,13 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
 
         <div className="px-5 py-5 space-y-4">
 
-          {/* PIN entry */}
+          {/* ── PIN entry ─────────────────────────────────────────────────── */}
           {phase === "pin" && (
             <>
               <div className={`flex justify-center gap-2.5 py-2 ${shake ? "animate-[pin-shake_0.4s_ease]" : ""}`}>
-                <style>{`
-                  @keyframes pin-shake {
-                    0%,100%{transform:translateX(0)}
-                    20%{transform:translateX(-8px)}
-                    40%{transform:translateX(8px)}
-                    60%{transform:translateX(-5px)}
-                    80%{transform:translateX(5px)}
-                  }
-                `}</style>
+                <style>{`@keyframes pin-shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}`}</style>
                 {Array.from({length: DOT_COUNT}).map((_,i) => (
-                  <div key={i} className={`w-3 h-3 rounded-full border-2 transition-all duration-150 ${
-                    i < digits.length ? "bg-[#E3120B] border-[#E3120B] scale-110" : "bg-transparent border-border"
-                  }`}/>
+                  <div key={i} className={`w-3 h-3 rounded-full border-2 transition-all duration-150 ${i < digits.length ? "bg-[#E3120B] border-[#E3120B] scale-110" : "bg-transparent border-border"}`}/>
                 ))}
               </div>
               {locked && <p className="text-center text-xs text-amber-500 font-ui">Too many attempts — wait {lockSecs}s</p>}
@@ -993,9 +1000,7 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
                 <div className="grid grid-cols-3 gap-1.5">
                   <button onClick={del} disabled={locked || digits.length === 0}
                     className="py-3.5 bg-accent hover:bg-accent/70 text-muted-foreground transition-colors disabled:opacity-30 flex items-center justify-center">
-                    <svg width="18" height="14" viewBox="0 0 18 14" fill="none">
-                      <path d="M6 1L1 7l5 6M1 7h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
+                    <svg width="18" height="14" viewBox="0 0 18 14" fill="none"><path d="M6 1L1 7l5 6M1 7h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
                   </button>
                   <button onClick={() => press("0")} disabled={locked}
                     className="py-3.5 bg-accent hover:bg-accent/70 active:bg-accent/50 text-foreground font-bold text-xl font-ui transition-colors disabled:opacity-30 select-none">
@@ -1010,50 +1015,113 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
             </>
           )}
 
-          {/* Running */}
+          {/* ── Running ───────────────────────────────────────────────────── */}
           {phase === "running" && (
-            <div className="py-8 text-center space-y-4">
-              <Loader2 size={32} className="text-[#E3120B] animate-spin mx-auto" />
-              <div>
-                <p className="text-sm font-bold font-ui text-foreground">{status}</p>
-                <p className="text-xs text-muted-foreground font-ui mt-1">{elapsed}s elapsed</p>
-                <p className="text-[10px] text-muted-foreground/40 font-ui mt-3">
-                  Generation takes 30–120s. Stay on this page.
-                </p>
+            <div className="space-y-4">
+              {/* Status + elapsed */}
+              <div className="flex items-center gap-3">
+                <Loader2 size={18} className="text-[#E3120B] animate-spin flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold font-ui text-foreground truncate">{status}</p>
+                  <p className="text-[10px] text-muted-foreground font-ui">{elapsed}s elapsed</p>
+                </div>
               </div>
-            </div>
-          )}
 
-          {/* Done */}
-          {phase === "done" && (
-            <div className="py-8 text-center space-y-3">
-              <div className="w-12 h-12 bg-[#E3120B] flex items-center justify-center mx-auto">
-                <span className="text-white text-2xl font-bold">✓</span>
+              {/* Progress bar */}
+              <div className="space-y-1">
+                <div className="flex justify-between text-[10px] text-muted-foreground font-ui">
+                  <span>Step {Math.min(step, total)} of {total}</span>
+                  <span>{progressPct}%</span>
+                </div>
+                <div className="h-1.5 bg-border rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[#E3120B] transition-all duration-500 ease-out"
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
               </div>
-              <p className="text-sm font-bold font-ui">
-                {stories} stories ready · {elapsed}s
+
+              {/* Log textarea */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground font-ui">Pipeline log</p>
+                  <button onClick={copyLogs}
+                    className="text-[10px] font-ui text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                    {copied ? "✓ Copied" : "Copy"}
+                  </button>
+                </div>
+                <textarea
+                  ref={logRef}
+                  readOnly
+                  value={logs.join("\n")}
+                  className="w-full h-28 text-[10px] font-mono bg-muted border border-border px-2 py-1.5 resize-none text-muted-foreground leading-relaxed"
+                />
+              </div>
+              <p className="text-[10px] text-muted-foreground/40 font-ui text-center">
+                Generation takes 1–3 min. Do not close this window.
               </p>
-              <p className="text-xs text-muted-foreground font-ui">Reloading…</p>
             </div>
           )}
 
-          {/* Error */}
+          {/* ── Done ──────────────────────────────────────────────────────── */}
+          {phase === "done" && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-[#E3120B] flex items-center justify-center flex-shrink-0">
+                  <span className="text-white text-lg font-bold">✓</span>
+                </div>
+                <div>
+                  <p className="text-sm font-bold font-ui">{stories} stories ready</p>
+                  <p className="text-xs text-muted-foreground font-ui">{elapsed}s · reloading…</p>
+                </div>
+              </div>
+              {/* Progress bar — complete */}
+              <div className="h-1.5 bg-border rounded-full overflow-hidden">
+                <div className="h-full bg-[#E3120B] w-full transition-all duration-300"/>
+              </div>
+              {/* Final log */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground font-ui">Log</p>
+                  <button onClick={copyLogs} className="text-[10px] font-ui text-muted-foreground hover:text-foreground transition-colors">
+                    {copied ? "✓ Copied" : "Copy"}
+                  </button>
+                </div>
+                <textarea readOnly value={logs.join("\n")}
+                  className="w-full h-24 text-[10px] font-mono bg-muted border border-border px-2 py-1.5 resize-none text-muted-foreground leading-relaxed"/>
+              </div>
+            </div>
+          )}
+
+          {/* ── Error ─────────────────────────────────────────────────────── */}
           {phase === "error" && (
-            <div className="py-6 text-center space-y-4">
-              <p className="text-xs text-[#E3120B] font-ui px-2">{status}</p>
-              <button onClick={() => { setPhase("pin"); setDigits([]); setAttempts(0); }}
-                className="px-4 py-2 border border-border text-xs font-bold font-ui hover:bg-accent transition-colors">
+            <div className="space-y-4">
+              <p className="text-xs text-[#E3120B] font-ui">{errorMsg}</p>
+              {logs.length > 0 && (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground font-ui">Log</p>
+                    <button onClick={copyLogs} className="text-[10px] font-ui text-muted-foreground hover:text-foreground transition-colors">
+                      {copied ? "✓ Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <textarea readOnly value={logs.join("\n")}
+                    className="w-full h-24 text-[10px] font-mono bg-muted border border-border px-2 py-1.5 resize-none text-muted-foreground leading-relaxed"/>
+                </div>
+              )}
+              <button onClick={() => { setPhase("pin"); setDigits([]); setAttempts(0); setLogs([]); }}
+                className="w-full py-2.5 border border-border text-xs font-bold font-ui hover:bg-accent transition-colors">
                 Try again
               </button>
             </div>
           )}
         </div>
 
-        <div className="px-5 pb-4 border-t border-border/50 pt-2.5">
-          <p className="text-[9px] text-muted-foreground/40 font-ui text-center">
-            Default PIN: 123456 · Change in admin panel → Overview
-          </p>
-        </div>
+        {phase === "pin" && (
+          <div className="px-5 pb-4 border-t border-border/50 pt-2.5">
+            <p className="text-[9px] text-muted-foreground/40 font-ui text-center">Default PIN: 123456 · Change in admin panel</p>
+          </div>
+        )}
       </div>
     </div>
   );

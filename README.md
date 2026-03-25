@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-3.4.3-red?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-3.4.4-red?style=for-the-badge)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
 ![Node.js](https://img.shields.io/badge/Node.js-20+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
@@ -252,11 +252,11 @@ score = ratioScore × 0.5 + sizeScore × 0.3 + sizeBonus × 0.2
 
 **Result:** 8/8 test stories got real editorial photos. Success rate jumped from ~60% to ~95%.
 
-#### Generation 5: Dimension validation for OG images (v3.4.3)
+#### Generation 5: Dimension validation for OG images (v3.4.4)
 
 **Problem discovered in v3.4.1:** Even with URL-pattern validation, some OG images are legitimate landscape URLs but portrait crops. Example: `s1.reutersmedia.net/resources/r/?m=...` — no portrait hint in the URL, but the actual image is 600×800 (portrait, ratio 0.75). Similarly, NYT sends portrait crops via CDN paths that don't contain `vertical` or `portrait`.
 
-**Two-pass validation in v3.4.3:**
+**Two-pass validation in v3.4.4:**
 
 **Pass 1 — URL patterns (fast, synchronous):** Regex-reject URLs containing `vertical`, `portrait`, `2by3`, `9x16`, `tallimage`, `_tall`, `-tall`, etc.
 
@@ -281,7 +281,7 @@ A JPEG dimension header is in the first SOF marker, usually within the first 300
 | v3.3.7 | AI → Wikipedia single query | ~60% | Regressed — AI too often returned flags/logos |
 | v3.4.0 | AI 5-query → Wikimedia scoring | ~95% | Major improvement |
 | v3.4.1 | + object-contain (no crop) | ~95% | Visual quality fix — no distortion |
-| v3.4.3 | + OG dimension validation (header bytes) | ~97% | Catches portrait OG images with landscape URLs |
+| v3.4.4 | + OG dimension validation (header bytes) | ~97% | Catches portrait OG images with landscape URLs |
 
 ---
 
@@ -433,7 +433,7 @@ A complete log of real problems found during development. Useful if you fork thi
 | 1.4.1 | SVG logos as story photos | Euronews/Wired logo as hero image | OG validator didn't exist | `isValidOgImage()` validator |
 | 1.5.1 | 50% stories missing images | WSJ, Bloomberg, AFP never had photos | Jina doesn't expose OG for these feeds | Direct HTML Range fetch fallback |
 | 3.3.7 | AI Wikipedia single-query regression | Flags, logos, maps instead of photos | AI returned country/brand names as Wikipedia subjects | 5-query approach with Wikimedia Commons scoring (v3.4.0) |
-| 3.4.0 | Portrait OG images accepted | Close-cropped face shots despite URL validation | Portrait images with landscape CDN URLs slip through regex | Header byte inspection for actual dimensions (v3.4.3) |
+| 3.4.0 | Portrait OG images accepted | Close-cropped face shots despite URL validation | Portrait images with landscape CDN URLs slip through regex | Header byte inspection for actual dimensions (v3.4.4) |
 | 3.4.0 | object-cover distorted images | Images cropped at wrong focal point | `object-cover` fills container by cropping edges | `object-contain` + `aspect-video` uniform card height (v3.4.1) |
 | 3.2.2 | v3.2.0 deploy never happened | Live site stayed at v3.0.0 | `fly deploy` never run after v3.2.0 | Added deploy to sprint checklist; always run flyctl + FTP |
 | 3.3.0 | fetch+ReadableStream SSE buffered | UI frozen 2min then all events arrive | Chrome/Safari buffer fetch response bodies | Native `EventSource` (GET) + job-based two-step API (v3.3.1) |

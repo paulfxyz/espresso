@@ -1,7 +1,7 @@
 /**
  * @file server/routes.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.4.3
+ * @version 3.4.4
  *
  * Cup of News — REST API Routes
  *
@@ -100,7 +100,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
    * Public. Used by uptime monitors, Docker HEALTHCHECK, GitHub Actions.
    */
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", version: "3.4.3" });
+    res.json({ status: "ok", version: "3.4.4" });
   });
 
   // ── Setup ──────────────────────────────────────────────────────────────────
@@ -244,6 +244,12 @@ export function registerRoutes(httpServer: Server, app: Express) {
       return res.status(404).json({ error: "No digest published yet. Generate and publish one from the admin panel." });
     }
 
+    // Cache the digest response for 5 minutes at the browser + CDN edge.
+    // The digest changes at most twice a day (6AM + 4PM GMT cron).
+    // 5 min is short enough that a fresh generate is visible quickly,
+    // long enough to meaningfully reduce load on the Fly.io machine.
+    // Cloudflare will respect s-maxage for edge caching.
+    res.setHeader("Cache-Control", "public, max-age=300, s-maxage=300, stale-while-revalidate=60");
     res.json({
       ...digest,
       stories: JSON.parse(digest.storiesJson),

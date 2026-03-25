@@ -1,7 +1,7 @@
 /**
  * @file client/src/pages/DigestView.tsx
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.4.3
+ * @version 3.4.4
  *
  * Cup of News — Public Digest Reader
  *
@@ -587,7 +587,7 @@ function StoryCard({ story, index, total, edition }: { story: DigestStory; index
            bg-card: neutral background fills any letterbox space cleanly.
            max-h cap prevents very tall images from dominating the viewport. */}
       {story.imageUrl && (
-        /* v3.4.3: Full-bleed hero image.
+        /* v3.4.4: Full-bleed hero image.
            -mx offsets cancel the article's px padding so the image runs edge-to-edge.
            aspect-[16/7]: wider than 16:9 — shows more width, less vertical letterbox.
            object-cover: fills the frame completely, no black bars.

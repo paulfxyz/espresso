@@ -5,7 +5,7 @@ import path from "path";
 /**
  * @file server/static.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.4.6
+ * @version 3.4.7
  *
  * Static file serving + SPA hash-route redirects.
  *
@@ -43,7 +43,7 @@ export function serveStatic(app: Express) {
     app.get(from, (_req, res) => res.redirect(301, to));
   }
 
-  // Cache headers strategy (v3.4.6):
+  // Cache headers strategy (v3.4.7):
   //
   // Hashed assets (JS/CSS bundles from Vite — e.g. index-CQTrQ_zc.js):
   //   max-age=31536000, immutable — 1 year, browser never re-fetches

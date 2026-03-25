@@ -1,7 +1,7 @@
 /**
  * @file server/pipeline.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.4.6
+ * @version 3.4.7
  *
  * Cup of News — Daily Digest Generation Pipeline
  *
@@ -437,7 +437,7 @@ async function fetchFromWikimediaMultiQuery(
     // Model: gemini-2.5-flash-preview (better contextual understanding than 2.0-flash)
     // Temperature: 0.1 (near-deterministic, consistent queries)
     //
-    // Prompt design principles (v3.4.6):
+    // Prompt design principles (v3.4.7):
     // - Prioritise CURRENT EVENT visuals (diplomatic meetings, protests, scenes)
     //   over ARCHIVAL/CEREMONIAL photos (award ceremonies, stock portraits)
     // - Named people must be paired with an action or context
@@ -792,7 +792,7 @@ Context: "${summary.slice(0, 150)}"`;
 /**
  * wikimediaBestPhoto — search Wikimedia Commons, return best landscape photo.
  *
- * v3.4.6 improvements:
+ * v3.4.7 improvements:
  * - Extended BAD filter: rejects award ceremonies, official portraits, stamps,
  *   coat-of-arms, historical/archival patterns by filename
  * - Uses Wikimedia thumb API to return a 1280px-wide resized URL instead of

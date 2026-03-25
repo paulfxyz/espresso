@@ -1,7 +1,7 @@
 ##
 ## .github/workflows/daily-digest.yml
 ## @author Paul Fleury <hello@paulfleury.com>
-## @version 3.4.1
+## @version 3.4.2
 ##
 ## Cup of News — Digest Generation for ALL 9 Language Editions
 ##
@@ -30,7 +30,7 @@
 ##   es  — Español                  🇪🇸
 ##   pt  — Português                🇧🇷
 ##   zh  — 中文 (Chinese)            🇨🇳
-##   ru  — Русский (Russian)        🌍
+##   ru  — Русский (Russian)        🇷🇺
 ##   tr  — Türkçe (Turkish)         🇹🇷
 ##   it  — Italiano (Italian)       🇮🇹
 ##
@@ -102,7 +102,7 @@ jobs:
             -X POST "${{ secrets.ESPRESSO_URL }}/api/digest/generate" \
             -H "x-admin-key: ${{ secrets.ESPRESSO_ADMIN_KEY }}" \
             -H "Content-Type: application/json" \
-            --max-time 120 \
+            --max-time 300 \
             -d '{"edition": "${{ matrix.edition }}"}')
 
           echo "HTTP status: $RESPONSE"

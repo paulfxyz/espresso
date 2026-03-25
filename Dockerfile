@@ -12,12 +12,15 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 
-# sharp requires vips at runtime
-RUN apk add --no-cache vips
+# sharp requires vips + build tools to compile from source during npm ci
+RUN apk add --no-cache vips vips-dev python3 make g++
 
 # Install production deps only
 COPY package*.json ./
 RUN npm ci --only=production
+
+# Remove build tools to keep the final image small
+RUN apk del vips-dev python3 make g++
 
 # Copy built output
 COPY --from=builder /app/dist ./dist

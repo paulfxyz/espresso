@@ -1,7 +1,7 @@
 /**
  * @file server/pipeline.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.5.0
+ * @version 3.5.1
  *
  * Cup of News — Daily Digest Generation Pipeline
  *
@@ -622,6 +622,12 @@ GATE 1 — HARD REJECT (score 0) if ANY of these:
 - Wildlife / nature photo (animals, plants, forests, landscapes) UNLESS the headline is directly about wildlife or nature
 - Generic stock-looking photo (bokeh backgrounds, autumn leaves, abstract textures)
 - Unrelated person, building, or scene with no connection to the headline
+- Wildlife, nature, or animal photos UNLESS the story is explicitly about wildlife/nature/animals
+- Abstract art, light patterns, bokeh, geometric shapes, prisms
+- Generic stock-photo scenes (couple walking, hands shaking, person at laptop) with no specific connection to the headline
+- Scientific visualizations or diagrams UNLESS the story is about that specific scientific topic
+- Sports action photos used for non-sports stories
+- Architectural/building exterior photos used for political/person stories
 
 GATE 2 — Score ONLY if Gate 1 passed:
 Score 8-10: directly shows the specific event, person, place, or object in the headline

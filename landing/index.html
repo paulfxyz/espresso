@@ -5,7 +5,7 @@
     Built with Perplexity Computer — https://www.perplexity.ai/computer
     @type SoftwareApplication
     @name Cup of News
-    @version 3.5.0
+    @version 3.5.1
   -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -90,7 +90,7 @@
     .logo {
       display: flex; align-items: center; gap: 10px; text-decoration: none;
       /* The logo mark on the landing page also supports hover→refresh,
-         matching the behaviour in the app (DigestView.tsx v3.5.0+). */
+         matching the behaviour in the app (DigestView.tsx v3.5.1+). */
     }
     .logo-mark {
       width: 32px; height: 32px;
@@ -125,7 +125,7 @@
       display: flex;
       align-items: center;
     }
-    /* ── Custom language dropdown (v3.5.0) ──────────────────────────────────
+    /* ── Custom language dropdown (v3.5.1) ──────────────────────────────────
        Mirrors the EditionSelector.tsx design from the React app:
        - Trigger: flag + code + chevron
        - Dropdown: 9 rows, flag + name + description
@@ -523,7 +523,7 @@
 <!-- ── Navigation ──────────────────────────────────────────────────────── -->
 <nav>
   <!--
-    The "C" logo on the landing page mirrors the app's v3.5.0 behaviour:
+    The "C" logo on the landing page mirrors the app's v3.5.1 behaviour:
     hover reveals a refresh icon, click spins for 1250ms then hard-reloads.
     This keeps the landing page fresh after a deploy without a forced cache-bust.
   -->
@@ -549,7 +549,7 @@
       <a href="https://github.com/paulfxyz/cup-of-news" target="_blank" rel="noopener" data-lang-key="nav_github">GitHub</a>
     </nav>
 
-    <!-- Language switcher — custom dropdown (v3.5.0), mirrors EditionSelector.tsx -->
+    <!-- Language switcher — custom dropdown (v3.5.1), mirrors EditionSelector.tsx -->
     <div class="lang-switcher">
       <div class="lang-dropdown" id="langDropdown" aria-label="Interface language">
 
@@ -654,7 +654,7 @@
 <!-- ── Hero ───────────────────────────────────────────────────────────── -->
 <section class="hero">
   <div class="hero-eyebrow">
-    <span class="hero-eyebrow-badge">v3.5.0</span>
+    <span class="hero-eyebrow-badge">v3.5.1</span>
     <span class="hero-eyebrow-text" data-lang-key="hero_badge">Open source · Self-hosted · One API key</span>
   </div>
 
@@ -907,7 +907,7 @@
       </div>
     </div>
 
-    <p style="font-size:11px;color:#333;margin-top:1.25rem;letter-spacing:0.05em;" data-lang-key="editions_note">✦ 9 native language editions · each generates independently · v3.5.0</p>
+    <p style="font-size:11px;color:#333;margin-top:1.25rem;letter-spacing:0.05em;" data-lang-key="editions_note">✦ 9 native language editions · each generates independently · v3.5.1</p>
   </div>
 </section>
 
@@ -1099,7 +1099,7 @@
 </div>
 
 <div class="footer-bottom">
-  <p data-lang-key="footer_copy">© 2026 Cup of News · MIT License · v3.5.0</p>
+  <p data-lang-key="footer_copy">© 2026 Cup of News · MIT License · v3.5.1</p>
   <p>
     Made by <a href="https://www.linkedin.com/in/paulfxyz/" target="_blank" rel="noopener">Paul Fleury</a>
     · Built with <a href="https://www.perplexity.ai/computer" target="_blank" rel="noopener">Perplexity Computer</a>
@@ -1109,10 +1109,10 @@
 <!-- ── JavaScript ─────────────────────────────────────────────────────── -->
 <script>
 /**
- * Landing page JavaScript — Cup of News v3.5.0
+ * Landing page JavaScript — Cup of News v3.5.1
  *
  * Responsibilities:
- *   1. Logo hard-refresh (matches app behaviour from DigestView.tsx v3.5.0)
+ *   1. Logo hard-refresh (matches app behaviour from DigestView.tsx v3.5.1)
  *   2. Multi-language UI switching (9 languages, localStorage persistence)
  *
  * LOGO REFRESH:
@@ -1187,7 +1187,7 @@ var TRANSLATIONS = {
     feat8_title: '~$0.07 per digest', feat8_text: 'One OpenRouter API key. One structured call. 20 stories at once. At Gemini 2.5 Pro rates, a Starbucks latte buys you three months of daily digests.',
     editions_label: '9 Languages', editions_headline: 'One app. Your language.',
     editions_sub: 'Each edition is generated independently with native-language sources, AI instructions in the target language, and region-specific editorial priorities. The principle: <strong style="color:#888;">1 edition = 1 language.</strong>',
-    editions_note: '✦ 9 native language editions · each generates independently · v3.5.0',
+    editions_note: '✦ 9 native language editions · each generates independently · v3.5.1',
     how_label: 'How it works', how_headline: 'Pipeline fires at 6 AM.\nYou wake up to a briefing.',
     step1_title: 'You submit links', step1_text: 'Drop URLs via the admin panel, API, or Apple Shortcuts. No links? The RSS fallback covers it.',
     step2_title: 'Pipeline fires at 6 AM', step2_text: 'Jina Reader extracts full text from every link — paywalls, YouTube, TikTok. Then 34+ RSS sources fill any gaps.',
@@ -1207,7 +1207,7 @@ var TRANSLATIONS = {
     footer_brand_text: 'Your personal AI-powered morning news digest. Self-hosted, open source, one API key.',
     footer_product_title: 'Product', footer_open_app: 'Open App', footer_admin: 'Admin Panel', footer_editions: 'Languages',
     footer_oss_title: 'Open Source', footer_github: 'GitHub Repository', footer_releases: 'Releases', footer_install: 'Install Guide', footer_changelog: 'Changelog', footer_issues: 'Issues',
-    footer_copy: '© 2026 Cup of News · MIT License · v3.5.0',
+    footer_copy: '© 2026 Cup of News · MIT License · v3.5.1',
   },
 
   /* ── Français ─────────────────────────────────────────────────────────── */
@@ -1236,7 +1236,7 @@ var TRANSLATIONS = {
     feat8_title: '~0,07 $ par digest', feat8_text: 'Une clé API OpenRouter. Un seul appel structuré. 20 articles en une fois. Aux tarifs Gemini 2.5 Pro, un latte Starbucks vous offre trois mois de revues de presse quotidiennes.',
     editions_label: '9 langues', editions_headline: 'Une app. Votre langue.',
     editions_sub: 'Chaque édition est générée indépendamment avec des sources en langue native, des instructions IA dans la langue cible et des priorités éditoriales régionales. Principe : <strong style="color:#888;">1 édition = 1 langue.</strong>',
-    editions_note: '✦ 9 éditions en langue native · chacune génère indépendamment · v3.5.0',
+    editions_note: '✦ 9 éditions en langue native · chacune génère indépendamment · v3.5.1',
     how_label: 'Comment ça marche', how_headline: 'Le pipeline se déclenche à 6 h.\nVous vous réveillez avec un briefing.',
     step1_title: 'Vous soumettez des liens', step1_text: 'Déposez des URLs via le panneau admin, l\'API, ou Raccourcis Apple. Sans liens ? Le fallback RSS couvre tout.',
     step2_title: 'Pipeline à 6 h', step2_text: 'Jina Reader extrait le texte complet de chaque lien — paywalls, YouTube, TikTok. Puis 34+ sources RSS comblent les lacunes.',
@@ -1256,7 +1256,7 @@ var TRANSLATIONS = {
     footer_brand_text: 'Votre revue de presse matinale personnelle, propulsée par l\'IA. Auto-hébergée, open source, une seule clé API.',
     footer_product_title: 'Produit', footer_open_app: 'Ouvrir l\'app', footer_admin: 'Panneau admin', footer_editions: 'Langues',
     footer_oss_title: 'Open Source', footer_github: 'Dépôt GitHub', footer_releases: 'Versions', footer_install: 'Guide d\'installation', footer_changelog: 'Journal des modifications', footer_issues: 'Signaler un problème',
-    footer_copy: '© 2026 Cup of News · Licence MIT · v3.5.0',
+    footer_copy: '© 2026 Cup of News · Licence MIT · v3.5.1',
   },
 
   /* ── Deutsch ──────────────────────────────────────────────────────────── */
@@ -1285,7 +1285,7 @@ var TRANSLATIONS = {
     feat8_title: '~0,07 $ pro Digest', feat8_text: 'Ein OpenRouter-API-Schlüssel. Ein strukturierter Aufruf. 20 Meldungen auf einmal. Zu Gemini-2.5-Pro-Preisen reicht ein Starbucks-Latte für drei Monate tägliche Nachrichtenzusammenfassungen.',
     editions_label: '9 Sprachen', editions_headline: 'Eine App. Deine Sprache.',
     editions_sub: 'Jede Ausgabe wird unabhängig mit muttersprachlichen Quellen, KI-Anweisungen in der Zielsprache und regionsspezifischen Redaktionsprioritäten generiert. Prinzip: <strong style="color:#888;">1 Ausgabe = 1 Sprache.</strong>',
-    editions_note: '✦ 9 native Sprachausgaben · jede generiert unabhängig · v3.5.0',
+    editions_note: '✦ 9 native Sprachausgaben · jede generiert unabhängig · v3.5.1',
     how_label: 'Wie es funktioniert', how_headline: 'Pipeline startet um 6 Uhr.\nDu wachst mit einem Briefing auf.',
     step1_title: 'Du sendest Links', step1_text: 'URLs über das Admin-Panel, die API oder Apple-Kurzbefehle einreichen. Keine Links? Der RSS-Fallback deckt alles ab.',
     step2_title: 'Pipeline um 6 Uhr', step2_text: 'Jina Reader extrahiert den vollständigen Text jedes Links — Paywalls, YouTube, TikTok. Dann füllen 34+ RSS-Quellen die Lücken.',
@@ -1305,7 +1305,7 @@ var TRANSLATIONS = {
     footer_brand_text: 'Dein persönlicher KI-gestützter morgendlicher Nachrichten-Digest. Selbst gehostet, Open Source, ein API-Schlüssel.',
     footer_product_title: 'Produkt', footer_open_app: 'App öffnen', footer_admin: 'Admin-Panel', footer_editions: 'Sprachen',
     footer_oss_title: 'Open Source', footer_github: 'GitHub-Repository', footer_releases: 'Versionen', footer_install: 'Installationsanleitung', footer_changelog: 'Änderungsprotokoll', footer_issues: 'Probleme melden',
-    footer_copy: '© 2026 Cup of News · MIT-Lizenz · v3.5.0',
+    footer_copy: '© 2026 Cup of News · MIT-Lizenz · v3.5.1',
   },
 
   /* ── Español ──────────────────────────────────────────────────────────── */
@@ -1334,7 +1334,7 @@ var TRANSLATIONS = {
     feat8_title: '~0,07 $ por digest', feat8_text: 'Una clave API de OpenRouter. Una llamada estructurada. 20 noticias a la vez. Con las tarifas de Gemini 2.5 Pro, un café de Starbucks te da para tres meses de resúmenes diarios.',
     editions_label: '9 idiomas', editions_headline: 'Una app. Tu idioma.',
     editions_sub: 'Cada edición se genera de forma independiente con fuentes en lengua nativa, instrucciones de IA en el idioma objetivo y prioridades editoriales regionales. Principio: <strong style="color:#888;">1 edición = 1 idioma.</strong>',
-    editions_note: '✦ 9 ediciones en idioma nativo · cada una genera de forma independiente · v3.5.0',
+    editions_note: '✦ 9 ediciones en idioma nativo · cada una genera de forma independiente · v3.5.1',
     how_label: 'Cómo funciona', how_headline: 'El pipeline se activa a las 6 AM.\nTe despiertas con un briefing.',
     step1_title: 'Envías enlaces', step1_text: 'Añade URLs desde el panel admin, la API o Accesos Directos de Apple. ¿Sin enlaces? El RSS fallback lo cubre.',
     step2_title: 'Pipeline a las 6 AM', step2_text: 'Jina Reader extrae el texto completo de cada enlace — muros de pago, YouTube, TikTok. Luego 34+ fuentes RSS llenan los huecos.',
@@ -1354,7 +1354,7 @@ var TRANSLATIONS = {
     footer_brand_text: 'Tu digest de noticias matutino personal, impulsado por IA. Autoalojado, código abierto, una sola clave API.',
     footer_product_title: 'Producto', footer_open_app: 'Abrir app', footer_admin: 'Panel admin', footer_editions: 'Idiomas',
     footer_oss_title: 'Código abierto', footer_github: 'Repositorio GitHub', footer_releases: 'Versiones', footer_install: 'Guía de instalación', footer_changelog: 'Cambios', footer_issues: 'Problemas',
-    footer_copy: '© 2026 Cup of News · Licencia MIT · v3.5.0',
+    footer_copy: '© 2026 Cup of News · Licencia MIT · v3.5.1',
   },
 
   /* ── Português ────────────────────────────────────────────────────────── */
@@ -1383,7 +1383,7 @@ var TRANSLATIONS = {
     feat8_title: '~0,07 $ por digest', feat8_text: 'Uma chave API do OpenRouter. Uma chamada estruturada. 20 histórias de uma vez. Às tarifas do Gemini 2.5 Pro, um café no Starbucks paga três meses de digests diários.',
     editions_label: '9 idiomas', editions_headline: 'Uma app. O teu idioma.',
     editions_sub: 'Cada edição é gerada independentemente com fontes em língua nativa, instruções de IA no idioma alvo e prioridades editoriais regionais. Princípio: <strong style="color:#888;">1 edição = 1 idioma.</strong>',
-    editions_note: '✦ 9 edições em língua nativa · cada uma gera independentemente · v3.5.0',
+    editions_note: '✦ 9 edições em língua nativa · cada uma gera independentemente · v3.5.1',
     how_label: 'Como funciona', how_headline: 'O pipeline dispara às 6h.\nAcordas com um briefing.',
     step1_title: 'Envias links', step1_text: 'Adiciona URLs pelo painel admin, API ou Atalhos Apple. Sem links? O fallback RSS cobre tudo.',
     step2_title: 'Pipeline às 6h', step2_text: 'Jina Reader extrai o texto completo de cada link — paywalls, YouTube, TikTok. Depois 34+ fontes RSS preenchem as lacunas.',
@@ -1403,7 +1403,7 @@ var TRANSLATIONS = {
     footer_brand_text: 'O teu digest de notícias matinal pessoal, impulsionado por IA. Auto-alojado, código aberto, uma chave API.',
     footer_product_title: 'Produto', footer_open_app: 'Abrir app', footer_admin: 'Painel admin', footer_editions: 'Idiomas',
     footer_oss_title: 'Código aberto', footer_github: 'Repositório GitHub', footer_releases: 'Versões', footer_install: 'Guia de instalação', footer_changelog: 'Registo de alterações', footer_issues: 'Problemas',
-    footer_copy: '© 2026 Cup of News · Licença MIT · v3.5.0',
+    footer_copy: '© 2026 Cup of News · Licença MIT · v3.5.1',
   },
 
   /* ── 中文 ─────────────────────────────────────────────────────────────── */
@@ -1432,7 +1432,7 @@ var TRANSLATIONS = {
     feat8_title: '约 0.07 美元/期', feat8_text: '一个 OpenRouter API 密钥。一次结构化调用。一次处理 20 条新闻。按 Gemini 2.5 Pro 的费率，一杯星巴克拿铁够支撑三个月的每日摘要。',
     editions_label: '9 种语言', editions_headline: '一个应用。你的语言。',
     editions_sub: '每个版本独立生成，使用原生语言来源、目标语言 AI 指令和地区编辑优先级。原则：<strong style="color:#888;">1 个版本 = 1 种语言。</strong>',
-    editions_note: '✦ 9 种原生语言版本 · 各自独立生成 · v3.5.0',
+    editions_note: '✦ 9 种原生语言版本 · 各自独立生成 · v3.5.1',
     how_label: '工作原理', how_headline: '流水线在早上 6 点启动，\n你醒来就有简报。',
     step1_title: '你提交链接', step1_text: '通过管理面板、API 或 Apple 快捷指令添加 URL。没有链接？RSS 备用来源会覆盖。',
     step2_title: '流水线在早上 6 点启动', step2_text: 'Jina Reader 提取每个链接的全文——包括付费墙、YouTube、TikTok。然后 34+ RSS 来源填补空缺。',
@@ -1452,7 +1452,7 @@ var TRANSLATIONS = {
     footer_brand_text: '你的个人 AI 驱动早间新闻摘要。自托管，开源，一个 API 密钥。',
     footer_product_title: '产品', footer_open_app: '打开应用', footer_admin: '管理面板', footer_editions: '语言版本',
     footer_oss_title: '开源', footer_github: 'GitHub 仓库', footer_releases: '发布版本', footer_install: '安装指南', footer_changelog: '更新日志', footer_issues: '问题反馈',
-    footer_copy: '© 2026 Cup of News · MIT 许可证 · v3.5.0',
+    footer_copy: '© 2026 Cup of News · MIT 许可证 · v3.5.1',
   },
 
   /* ── Русский ──────────────────────────────────────────────────────────── */
@@ -1481,7 +1481,7 @@ var TRANSLATIONS = {
     feat8_title: '~0,07 $ за выпуск', feat8_text: 'Один API-ключ OpenRouter. Один структурированный запрос. 20 новостей за один вызов. По тарифам Gemini 2.5 Pro, один латте в Starbucks покрывает три месяца ежедневных дайджестов.',
     editions_label: '9 языков', editions_headline: 'Одно приложение. Твой язык.',
     editions_sub: 'Каждый выпуск генерируется независимо — с источниками на родном языке, инструкциями ИИ на целевом языке и региональными редакционными приоритетами. Принцип: <strong style="color:#888;">1 выпуск = 1 язык.</strong>',
-    editions_note: '✦ 9 выпусков на родных языках · каждый генерируется независимо · v3.5.0',
+    editions_note: '✦ 9 выпусков на родных языках · каждый генерируется независимо · v3.5.1',
     how_label: 'Как это работает', how_headline: 'Пайплайн запускается в 6:00.\nПросыпаешься с дайджестом.',
     step1_title: 'Ты присылаешь ссылки', step1_text: 'Добавляй URL через панель администратора, API или Apple Shortcuts. Нет ссылок? RSS-резерв всё покроет.',
     step2_title: 'Пайплайн в 6:00', step2_text: 'Jina Reader извлекает полный текст каждой ссылки — пейволы, YouTube, TikTok. Затем 34+ RSS-источника заполняют пробелы.',
@@ -1501,7 +1501,7 @@ var TRANSLATIONS = {
     footer_brand_text: 'Твой личный AI-дайджест новостей. Самохостинг, открытый код, один API-ключ.',
     footer_product_title: 'Продукт', footer_open_app: 'Открыть приложение', footer_admin: 'Панель администратора', footer_editions: 'Языки',
     footer_oss_title: 'Открытый код', footer_github: 'Репозиторий GitHub', footer_releases: 'Релизы', footer_install: 'Руководство по установке', footer_changelog: 'Список изменений', footer_issues: 'Проблемы',
-    footer_copy: '© 2026 Cup of News · Лицензия MIT · v3.5.0',
+    footer_copy: '© 2026 Cup of News · Лицензия MIT · v3.5.1',
   },
 
   /* ── Türkçe ───────────────────────────────────────────────────────────── */
@@ -1530,7 +1530,7 @@ var TRANSLATIONS = {
     feat8_title: 'Özet başına ~0,07 $', feat8_text: 'Bir OpenRouter API anahtarı. Tek bir yapılandırılmış çağrı. Bir seferde 20 haber. Gemini 2.5 Pro fiyatlarıyla, bir Starbucks latte üç aylık günlük özetleri karşılıyor.',
     editions_label: '9 Dil', editions_headline: 'Tek uygulama. Senin dilin.',
     editions_sub: 'Her baskı, yerel dilde kaynaklarla, hedef dilde yapay zeka talimatlarıyla ve bölgeye özgü editoryal önceliklerle bağımsız olarak üretilir. İlke: <strong style="color:#888;">1 baskı = 1 dil.</strong>',
-    editions_note: '✦ 9 yerel dil baskısı · her biri bağımsız üretilir · v3.5.0',
+    editions_note: '✦ 9 yerel dil baskısı · her biri bağımsız üretilir · v3.5.1',
     how_label: 'Nasıl çalışır', how_headline: 'Boru hattı saat 06:00\'da başlar,\nsiz bir bültenle uyanırsınız.',
     step1_title: 'Bağlantı gönderirsiniz', step1_text: 'Yönetici paneli, API veya Apple Kısayolları aracılığıyla URL ekleyin. Bağlantı yok mu? RSS yedekleme her şeyi kapsar.',
     step2_title: 'Boru hattı saat 06:00\'da', step2_text: 'Jina Reader her bağlantının tam metnini çıkarır — ücretli duvarlar, YouTube, TikTok dahil. Ardından 34+ RSS kaynağı boşlukları doldurur.',
@@ -1550,7 +1550,7 @@ var TRANSLATIONS = {
     footer_brand_text: 'Kişisel yapay zeka destekli sabah haber özetiniz. Kendi sunucunda barındırılan, açık kaynaklı, tek API anahtarı.',
     footer_product_title: 'Ürün', footer_open_app: 'Uygulamayı Aç', footer_admin: 'Yönetici Paneli', footer_editions: 'Diller',
     footer_oss_title: 'Açık Kaynak', footer_github: 'GitHub Deposu', footer_releases: 'Sürümler', footer_install: 'Kurulum Kılavuzu', footer_changelog: 'Değişiklik Günlüğü', footer_issues: 'Sorunlar',
-    footer_copy: '© 2026 Cup of News · MIT Lisansı · v3.5.0',
+    footer_copy: '© 2026 Cup of News · MIT Lisansı · v3.5.1',
   },
 
   /* ── Italiano ─────────────────────────────────────────────────────────── */
@@ -1579,7 +1579,7 @@ var TRANSLATIONS = {
     feat8_title: '~0,07 $ per digest', feat8_text: 'Una chiave API OpenRouter. Una chiamata strutturata. 20 notizie in un colpo solo. Con le tariffe di Gemini 2.5 Pro, un caffè da Starbucks ti copre tre mesi di digest quotidiani.',
     editions_label: '9 Lingue', editions_headline: 'Un\'app. La tua lingua.',
     editions_sub: 'Ogni edizione viene generata indipendentemente con fonti in lingua nativa, istruzioni IA nella lingua target e priorità editoriali regionali. Principio: <strong style="color:#888;">1 edizione = 1 lingua.</strong>',
-    editions_note: '✦ 9 edizioni in lingua nativa · ognuna genera indipendentemente · v3.5.0',
+    editions_note: '✦ 9 edizioni in lingua nativa · ognuna genera indipendentemente · v3.5.1',
     how_label: 'Come funziona', how_headline: 'Il pipeline scatta alle 6.\nTi svegli con un briefing.',
     step1_title: 'Invii i link', step1_text: 'Aggiungi URL dal pannello admin, API o Comandi rapidi Apple. Nessun link? Il fallback RSS copre tutto.',
     step2_title: 'Pipeline alle 6', step2_text: 'Jina Reader estrae il testo completo da ogni link — paywall, YouTube, TikTok. Poi 34+ fonti RSS colmano le lacune.',
@@ -1599,7 +1599,7 @@ var TRANSLATIONS = {
     footer_brand_text: 'Il tuo digest personale di notizie mattutine, potenziato dall\'IA. Self-hosted, open source, una chiave API.',
     footer_product_title: 'Prodotto', footer_open_app: 'Apri app', footer_admin: 'Pannello admin', footer_editions: 'Lingue',
     footer_oss_title: 'Open Source', footer_github: 'Repository GitHub', footer_releases: 'Versioni', footer_install: 'Guida all\'installazione', footer_changelog: 'Registro delle modifiche', footer_issues: 'Segnalazioni',
-    footer_copy: '© 2026 Cup of News · Licenza MIT · v3.5.0',
+    footer_copy: '© 2026 Cup of News · Licenza MIT · v3.5.1',
   },
 };
 

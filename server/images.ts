@@ -1,7 +1,7 @@
 /**
  * @file server/images.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.5.0
+ * @version 3.5.1
  *
  * Cup of News — Self-hosted image pipeline
  *
@@ -74,9 +74,10 @@ function hashUrl(url: string): string {
  *   4. Write to /data/images/{hash}.webp
  *   5. Return /images/{hash}.webp
  *
- * Smart crop: sharp's 'attention' strategy crops to the most visually
- * interesting region (faces, high-contrast areas) instead of dead-centre.
- * This handles portrait images gracefully — crops to the most relevant part.
+ * Smart crop: sharp's 'entropy' strategy crops to maximise information content
+ * (Shannon entropy of pixel values) — better for complex real-world news scenes.
+ * 'attention' was biasing toward high-contrast edges, sometimes selecting
+ * backgrounds over subjects. Entropy preserves the most detail-rich region.
  */
 export async function rehostImage(sourceUrl: string): Promise<string | null> {
   if (!sourceUrl || sourceUrl.startsWith("data:") || sourceUrl.startsWith("/")) {
@@ -121,11 +122,12 @@ export async function rehostImage(sourceUrl: string): Promise<string | null> {
     const inputBuffer = Buffer.from(arrayBuffer);
 
     // Convert to WebP: resize to 1200×525, smart crop, quality 82
-    // sharp 'attention' strategy: crops to the most visually interesting region
+    // sharp 'entropy' strategy: maximises Shannon entropy of the crop region
+    // — better for news photos with complex real-world scenes
     const webpBuffer = await sharp(inputBuffer)
       .resize(TARGET_WIDTH, TARGET_HEIGHT, {
         fit: "cover",
-        position: "attention",  // smart crop to most interesting region
+        position: "entropy",  // entropy crop — maximise information content
       })
       .webp({ quality: 82 })
       .toBuffer();

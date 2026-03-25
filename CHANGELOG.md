@@ -1,3 +1,27 @@
+## [3.5.1] — 2026-03-25
+
+**Better image cropping. Stricter vision check. No more center-crop cutting heads off.**
+
+### Fixes (v3.5.1)
+
+**1. CSS: object-top replaces object-center**
+Story images (hero banner + grid thumbnails) now use `object-position: top` instead of `object-center`.
+News photos have faces and subjects near the top — center-crop was cutting heads off (e.g., Kim Jong Un / Lukashenko embrace: both heads clipped). Top-biased crop preserves the most important part of editorial photos.
+
+**2. Sharp crop: entropy replaces attention**
+The server-side WebP conversion now uses sharp's `entropy` crop strategy instead of `attention`.
+Entropy maximises the information content of the crop region (Shannon entropy of pixel values), better suited to complex real-world news scenes. `attention` was biasing toward high-contrast edges, sometimes selecting backgrounds over subjects.
+
+**3. Stricter vision check prompt**
+Extended the vision model rejection rules to explicitly reject:
+- Wildlife/nature/animal photos for non-wildlife stories
+- Abstract art, light patterns, bokeh, prisms
+- Generic stock-photo scenes with no specific connection to the headline
+- Scientific visualizations for non-science stories
+- Architectural exteriors for political/person stories
+
+---
+
 ## [3.5.0] — 2026-03-25
 
 **Self-hosted WebP images. OG re-fetch from source. No more picsum/random photos.**

@@ -1,7 +1,7 @@
 /**
  * @file server/routes.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.3.3
+ * @version 3.3.4
  *
  * Cup of News — REST API Routes
  *
@@ -100,7 +100,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
    * Public. Used by uptime monitors, Docker HEALTHCHECK, GitHub Actions.
    */
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", version: "3.3.3" });
+    res.json({ status: "ok", version: "3.3.4" });
   });
 
   // ── Setup ──────────────────────────────────────────────────────────────────
@@ -432,7 +432,16 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
       emitJob(jobId, { type: "progress", step: 3, total: 5, message: "Running Gemini 2.5 Pro — selecting 20 stories…", elapsed: elapsed() });
 
-      const result = await runDailyPipeline(apiKey, editionId);
+      // 3-minute overall timeout on the pipeline — prevents infinite hangs
+      // (e.g. OpenRouter slow response, Jina rate-limit storm)
+      const PIPELINE_TIMEOUT_MS = 3 * 60 * 1000;
+      const pipelineResult = await Promise.race([
+        runDailyPipeline(apiKey, editionId),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Pipeline timeout after 3 minutes. Please try again.")), PIPELINE_TIMEOUT_MS)
+        ),
+      ]);
+      const result = pipelineResult as Awaited<ReturnType<typeof runDailyPipeline>>;
       clearInterval(hb);
 
       emitJob(jobId, { type: "progress", step: 4, total: 5, message: `AI selected ${result.storiesCount} stories. Publishing…`, elapsed: elapsed() });

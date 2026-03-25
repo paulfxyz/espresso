@@ -1,3 +1,42 @@
+## [3.3.4] — 2026-03-25
+
+**Critical: pipeline hung forever. Added AbortController timeouts to every async call.**
+
+### Root cause of infinite running state
+
+The pipeline hung forever because:
+
+1. `callOpenRouter()` had NO timeout. The `fetch()` call to OpenRouter API had
+   no AbortController, no signal, no timeout. If OpenRouter was slow (rate limit,
+   model loading, network issue), the await would never resolve.
+   
+   Fix: AbortController with 150-second timeout. Gemini 2.5 Pro can legitimately
+   take 60-120s for a 60-article prompt, so 150s gives headroom while still
+   bounding worst-case hangs.
+
+2. `extractTextFromUrl()` Jina fetch also had no timeout. A single slow/rate-limited
+   Jina request could stall an entire batch forever.
+   
+   Fix: AbortController with 20-second timeout per Jina request.
+
+3. Overall pipeline had no timeout. Even with per-call timeouts, chained operations
+   could compound to exceed any reasonable user wait time.
+   
+   Fix: `Promise.race([runDailyPipeline(), timeout(3min)])` in the job handler.
+   After 3 minutes the job fails with a descriptive error message.
+
+### Previous debugging that was chasing the wrong thing
+
+The SSE/EventSource work (3.3.0-3.3.3) was correct engineering — the streaming
+infrastructure was fine. But the pipeline itself was hanging indefinitely, so
+no amount of client-side reconnect logic would ever see a done event.
+
+The server logs showed: `🤖 Calling OpenRouter (google/gemini-2.5-pro) with 60 articles…`
+and then... nothing. No completion log. This was the signal that the OpenRouter
+fetch was hung, not the networking layer.
+
+---
+
 ## [3.3.1] — 2026-03-25
 
 **Job-based SSE with native EventSource. Progress bar. Log textarea. Copy button.**

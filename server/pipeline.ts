@@ -1,7 +1,7 @@
 /**
  * @file server/pipeline.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.3.3
+ * @version 3.3.4
  *
  * Cup of News — Daily Digest Generation Pipeline
  *
@@ -502,7 +502,11 @@ async function extractViaJina(
   url: string
 ): Promise<{ text: string; title: string; ogImage: string | null }> {
   const jinaUrl = `${JINA_PREFIX}${url}`;
+  // 20s timeout per Jina request — Jina rate-limits aggressively; hanging forever makes the pipeline stall
+  const jinaCtrl = new AbortController();
+  const jinaTimeout = setTimeout(() => jinaCtrl.abort(), 20_000);
   const res = await fetch(jinaUrl, {
+    signal: jinaCtrl.signal,
     headers: {
       Accept: "text/markdown",
       "User-Agent": "CupOfNews-Bot/0.2",
@@ -563,14 +567,24 @@ async function callOpenRouter(
     "X-Title": "Cup of News",
   };
 
-  // Attempt 1
-  let res = await fetch(OPENROUTER_API_URL, { method: "POST", headers, body });
+  // Attempt 1 — 150s timeout (Gemini 2.5 Pro can take 60-120s for large prompts)
+  const makeRequest = async () => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 150_000);
+    try {
+      return await fetch(OPENROUTER_API_URL, { method: "POST", headers, body, signal: ctrl.signal });
+    } finally {
+      clearTimeout(t);
+    }
+  };
+
+  let res = await makeRequest();
 
   // Single retry on rate-limit or server error
   if ((res.status === 429 || res.status >= 500) && res.status !== 401) {
     console.warn(`⚠️  OpenRouter ${res.status} — retrying in 2s…`);
     await new Promise((r) => setTimeout(r, 2000));
-    res = await fetch(OPENROUTER_API_URL, { method: "POST", headers, body });
+    res = await makeRequest();
   }
 
   if (!res.ok) {

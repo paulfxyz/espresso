@@ -1,7 +1,7 @@
 /**
  * @file shared/editions.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.2.2
+ * @version 3.2.3
  *
  * Cup of News — Edition Registry
  *
@@ -365,7 +365,7 @@ export const EDITIONS: Edition[] = [
   {
     id: "ru",
     name: "Русский",
-    flag: "🌍",
+    flag: "🇷🇺",
     language: "ru",
     languageName: "Русский",
     description: "Выпуск на русском — новости мира",

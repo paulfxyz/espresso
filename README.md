@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-3.2.2-red?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-3.2.3-red?style=for-the-badge)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
 ![Node.js](https://img.shields.io/badge/Node.js-20+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
@@ -200,7 +200,7 @@ One real deployment frustration: Fly auto-generates a random app name during set
 
 ## 🌍 Language Editions
 
-As of v3.2.2, Cup of News generates natively in **9 languages**. Each edition has its own RSS source set, its own system prompt language, and its own editorial identity. The principle: 1 edition = 1 language.
+As of v3.2.3, Cup of News generates natively in **9 languages**. Each edition has its own RSS source set, its own system prompt language, and its own editorial identity. The principle: 1 edition = 1 language.
 
 | Edition | Language | Flag | Key Sources | Notes |
 |---------|----------|------|-------------|-------|
@@ -210,7 +210,7 @@ As of v3.2.2, Cup of News generates natively in **9 languages**. Each edition ha
 | **es** | Español | 🇪🇸 | El País, EFE, BBC Mundo, La Vanguardia | Spain + Latin America |
 | **pt** | Português | 🇧🇷 | Folha, G1, Público, JN, Agencia Brasil | Brazil + Portugal blend |
 | **zh** | 中文 | 🇨🇳 | BBC中文, DW中文, RFI中文, 自由亚洲 | Independent outlets only |
-| **ru** | Русский | 🌍 | BBCРусская, DWРусская, Meduza, Радио Свобода | Independent outlets only |
+| **ru** | Русский | 🇷🇺 | BBCРусская, DWРусская, Meduza, Радио Свобода | Independent outlets only |
 | **tr** | Türkçe | 🇹🇷 | BBC Türkçe, DW Türkçe, Bianet, Cumhuriyet, TRT Haber | **NEW v3.2.0** |
 | **it** | Italiano | 🇮🇹 | ANSA, Corriere della Sera, La Repubblica, Il Sole 24 Ore | **NEW v3.2.0** |
 
@@ -523,6 +523,7 @@ Full history with engineering narrative: **[CHANGELOG.md](./CHANGELOG.md)**
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **3.2.3** | 2026-03-25 | Russian flag fix (🌍 → 🇷🇺), landing page custom language dropdown matching app design |
 | **3.2.2** | 2026-03-25 | Modal click-outside close, card slide animation, triple-click generate. Twice-daily cron (6 AM + 4 PM GMT). FTP + Fly.io deploy automation |
 | **3.2.0** | 2026-03-25 | Turkish + Italian editions (9 languages total), logo hard-refresh (1250ms spinner + window.location.reload()), landing page full rewrite |
 | **3.0.0** | 2026-03-23 | 4 new native language editions (ES, PT, ZH, RU), select dropdown lang switcher, Unicode dedup, dark mode default, React Query refresh UX |
@@ -546,7 +547,7 @@ Full history with engineering narrative: **[CHANGELOG.md](./CHANGELOG.md)**
 
 ## 🗺️ Roadmap
 
-**v3.2.2 shipped.** 9 native language editions (EN/FR/DE/ES/PT/ZH/RU/TR/IT), logo hard-refresh UX, complete landing page rewrite removing all legacy edition references.
+**v3.2.3 shipped.** 9 native language editions (EN/FR/DE/ES/PT/ZH/RU/TR/IT), logo hard-refresh UX, complete landing page rewrite removing all legacy edition references.
 
 ### v3.2 — Delivery & Channels
 - 📧 Email delivery (Postmark / Resend) — digest in your inbox at 6 AM

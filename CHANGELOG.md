@@ -1,3 +1,53 @@
+## [3.2.3] — 2026-03-25
+
+**Russian flag corrected. Landing page language selector rebuilt as custom dropdown.**
+
+### Russian flag fix
+
+The Russian edition was using 🌍 (globe) as its flag — a deliberate workaround
+chosen during v3.0.0 because Russia's geopolitical context made a flag choice
+sensitive. On reflection, the globe emoji is confusing: it's already used for the
+English "World" edition, making Russian visually indistinguishable in the edition
+selector. The correct emoji 🇷🇺 is now used consistently:
+
+- `shared/editions.ts`: `flag: "🌍"` → `flag: "🇷🇺"` in the ru edition block
+- `landing/index.html`: select option + edition card
+- `README.md`: language editions table
+
+### Landing page — custom language dropdown (mirrors app design)
+
+The native `<select>` element was replaced with a custom dropdown that exactly
+mirrors `EditionSelector.tsx` from the React app:
+
+**Trigger button:**
+- Flag emoji + language code (e.g. 🇫🇷 FR) + animated chevron (rotates on open)
+- Red border, hover: white border + subtle white fill
+- `aria-expanded` updated on open/close for screen readers
+
+**Dropdown panel (260px wide):**
+- Red "Language" header label (matches "Edition" label in app)
+- 9 rows: flag (22px) + name (bold) + source description (muted, truncated)
+- Active row: red left border + red name text + ✦ mark (identical to app)
+- Hover: subtle white/6% fill
+
+**Behaviour:**
+- Click trigger → open/close
+- Click outside → close (mousedown listener on document)
+- Escape key → close
+- Selecting an edition calls `setLang(lang)` and closes the panel
+
+**`setLang()` updated:**
+- Now also updates the trigger's flag and code display
+- Marks the active `.lang-option` row with `.active` class
+- Fallback to English if lang not in EDITION_META
+
+**Why not use a library:**
+The landing page is a static HTML file served from Siteground — no build step,
+no npm, no framework. The entire custom dropdown is ~120 lines of CSS + ~60 lines
+of JS, self-contained and dependency-free.
+
+---
+
 ## [3.2.2] — 2026-03-25
 
 **Modal click-outside close. Card slide animations. Triple-click logo generates new digest.**

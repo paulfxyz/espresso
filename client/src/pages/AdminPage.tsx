@@ -1,7 +1,7 @@
 /**
  * @file client/src/pages/AdminPage.tsx
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.2.8
+ * @version 3.2.9
  *
  * Cup of News — Admin Panel
  *
@@ -174,7 +174,13 @@ function OverviewTab({ headers }: { headers: Record<string, string> }) {
     }).catch(() => { /* timeout/502 expected — pipeline still runs on server */ });
 
     // Poll /api/digests every 3s waiting for new digest for today
-    const today = new Date().toISOString().slice(0, 10);
+    // Snapshot current digest count — we poll until count increases
+    let initialCount = 0;
+    try {
+      const snap = await apiRequest("GET", "/api/digests", undefined, headers);
+      if (snap.ok) { const all = await snap.json(); initialCount = all.length; }
+    } catch {}
+
     let polls = 0;
     pollRef.current = setInterval(async () => {
       polls += 1;
@@ -182,23 +188,23 @@ function OverviewTab({ headers }: { headers: Record<string, string> }) {
         const r = await apiRequest("GET", "/api/digests", undefined, headers);
         if (r.ok) {
           const all = await r.json();
-          const fresh = all.find((d: any) => d.date === today && d.edition === selectedEdition.id);
-          if (fresh) {
+          // New digest appeared for the selected edition
+          if (all.length > initialCount) {
+            const newest = all.find((d: any) => d.edition === selectedEdition.id);
             stopTimers();
             setGenerating(false);
             qc.invalidateQueries({ queryKey: ["/api/digests"] });
-            toast({ title: `${selectedEdition.flag} Digest ready — ${fresh.storiesCount ?? "20"} stories (${selectedEdition.name})` });
+            toast({ title: `${selectedEdition.flag} Digest generated — ${newest?.storiesCount ?? 20} stories (${selectedEdition.name})` });
             return;
           }
         }
       } catch { /* keep polling */ }
-      // After 3 min, give up and reload
       if (polls >= 60) {
         ctrl.abort();
         stopTimers();
         setGenerating(false);
         qc.invalidateQueries({ queryKey: ["/api/digests"] });
-        toast({ title: "Generation may still be running", description: "Refresh in a moment to see the result." });
+        toast({ title: "Generation may still be running — refresh in a moment." });
       }
     }, 3000);
   };
@@ -549,7 +555,12 @@ function DigestTab({ headers }: { headers: Record<string, string> }) {
       body: JSON.stringify({ edition: selectedEdition.id }),
     }).catch(() => {});
 
-    const today = new Date().toISOString().slice(0, 10);
+    let initialCount2 = 0;
+    try {
+      const snap = await apiRequest("GET", "/api/digests", undefined, headers);
+      if (snap.ok) { const all = await snap.json(); initialCount2 = all.length; }
+    } catch {}
+
     let polls = 0;
     pollRef2.current = setInterval(async () => {
       polls += 1;
@@ -557,12 +568,12 @@ function DigestTab({ headers }: { headers: Record<string, string> }) {
         const r = await apiRequest("GET", "/api/digests", undefined, headers);
         if (r.ok) {
           const all = await r.json();
-          const fresh = all.find((d: any) => d.date === today && d.edition === selectedEdition.id);
-          if (fresh) {
+          if (all.length > initialCount2) {
+            const newest = all.find((d: any) => d.edition === selectedEdition.id);
             stopTimers2();
             setGenerating2(false);
             qc.invalidateQueries({ queryKey: ["/api/digests"] });
-            toast({ title: `${selectedEdition.flag} Digest ready — ${fresh.storiesCount ?? "20"} stories (${selectedEdition.name})` });
+            toast({ title: `${selectedEdition.flag} Digest generated — ${newest?.storiesCount ?? 20} stories (${selectedEdition.name})` });
             return;
           }
         }
@@ -571,7 +582,7 @@ function DigestTab({ headers }: { headers: Record<string, string> }) {
         stopTimers2();
         setGenerating2(false);
         qc.invalidateQueries({ queryKey: ["/api/digests"] });
-        toast({ title: "Refresh to see result", description: "Generation may still be running." });
+        toast({ title: "Refresh to see result — generation may still be running." });
       }
     }, 3000);
   };

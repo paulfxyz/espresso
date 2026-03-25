@@ -1,7 +1,7 @@
 /**
  * @file client/src/pages/DigestView.tsx
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.2.8
+ * @version 3.2.9
  *
  * Cup of News — Public Digest Reader
  *
@@ -866,7 +866,14 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
 
       // 3. Server acknowledged — poll /api/digest/latest until a fresh digest appears
       setPhase("polling");
-      const currentDigestDate = new Date().toISOString().slice(0, 10); // today YYYY-MM-DD
+      // Track the digest ID that existed BEFORE we started generating
+      // so we can detect when a NEW one appears (regardless of date/timezone)
+      let previousDigestId: number | null = null;
+      try {
+        const prev = await fetch(`/api/digest/latest?edition=${encodeURIComponent(edition.id)}`);
+        if (prev.ok) { const d = await prev.json(); previousDigestId = d?.id ?? null; }
+      } catch {}
+
       let polls = 0;
       const MAX_POLLS = 120; // 120 × 1s = 2 minutes max
 
@@ -876,8 +883,12 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
           const dr = await fetch(`/api/digest/latest?edition=${encodeURIComponent(edition.id)}`);
           if (dr.ok) {
             const data = await dr.json();
-            // Success: a digest for today exists
-            if (data && data.date === currentDigestDate && data.status === "published") {
+            // A new digest appeared if its ID changed OR stories exist for today
+            const isNew = data && (
+              (data.id !== previousDigestId) ||
+              (data.stories?.length > 0 && data.date >= new Date().toISOString().slice(0, 10))
+            );
+            if (isNew && data.id !== previousDigestId) {
               clearInterval(poll);
               stopGenTimer();
               setPhase("done");
@@ -890,7 +901,7 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
         if (polls >= MAX_POLLS) {
           clearInterval(poll);
           stopGenTimer();
-          // Pipeline probably succeeded but digest isn't published yet — reload anyway
+          // 2 min elapsed — reload anyway, digest is likely ready
           setTimeout(() => window.location.reload(), 500);
         }
       }, 1000);

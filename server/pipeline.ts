@@ -1,7 +1,7 @@
 /**
  * @file server/pipeline.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.2.8
+ * @version 3.2.9
  *
  * Cup of News — Daily Digest Generation Pipeline
  *

@@ -1,7 +1,7 @@
 /**
  * @file server/routes.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.2.8
+ * @version 3.2.9
  *
  * Cup of News — REST API Routes
  *
@@ -100,7 +100,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
    * Public. Used by uptime monitors, Docker HEALTHCHECK, GitHub Actions.
    */
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", version: "3.2.8" });
+    res.json({ status: "ok", version: "3.2.9" });
   });
 
   // ── Setup ──────────────────────────────────────────────────────────────────
@@ -364,10 +364,16 @@ export function registerRoutes(httpServer: Server, app: Express) {
     // Respond immediately — client will poll for the new digest
     res.json({ success: true, message: "Generation started", edition: editionId });
 
-    // Run pipeline async (fire-and-forget)
+    // Run pipeline async, then auto-publish the result
     runDailyPipeline(apiKey, editionId)
       .then(result => {
-        console.log(`[PIN generate] ${editionId}: digest ${result.digestId} created, ${result.storiesCount} stories`);
+        console.log(`[PIN generate] ${editionId}: digest ${result.digestId} created, ${result.storiesCount} stories — auto-publishing`);
+        // Auto-publish so the client poll can find it immediately
+        storage.updateDigest(result.digestId, {
+          status: "published",
+          publishedAt: new Date().toISOString(),
+        });
+        console.log(`[PIN generate] ${editionId}: digest ${result.digestId} published`);
       })
       .catch(err => {
         console.error(`[PIN generate] ${editionId} failed:`, err.message);

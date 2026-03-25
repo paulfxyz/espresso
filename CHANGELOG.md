@@ -1,3 +1,28 @@
+## [3.2.9] — 2026-03-25
+
+**Critical fix: generate-with-pin now auto-publishes. Polling uses digest ID comparison.**
+
+### Root cause of 'nothing works after a minute'
+
+1. `generate-with-pin` ran the pipeline and saved the digest as **draft**.
+   The reader never shows drafts — only published digests.
+   Fix: after `runDailyPipeline` resolves, immediately call
+   `storage.updateDigest(id, { status: 'published', publishedAt: now })`.
+
+2. The client poll checked `data.date === currentDigestDate && status === 'published'`.
+   Two problems: (a) draft digests are never returned by `/api/digest/latest`
+   anyway; (b) the date comparison used the client's local timezone which may
+   differ from the server's UTC date.
+   Fix: snapshot the previous digest ID before firing generate, then poll until
+   `data.id !== previousDigestId`. ID comparison is timezone-independent and
+   unambiguous.
+
+3. Admin panel polling also used `d.date === today && d.edition === id` which
+   had the same timezone problem. Fix: snapshot digest count before firing,
+   poll until count increases.
+
+---
+
 ## [3.2.8] — 2026-03-25
 
 **Fixed PIN keypad (6 dots, PIN-only auth, polling). Fixed admin digest generation (async + polling).**

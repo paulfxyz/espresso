@@ -1,7 +1,7 @@
 /**
  * @file client/src/pages/DigestView.tsx
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.3.2
+ * @version 3.3.3
  *
  * Cup of News — Public Digest Reader
  *
@@ -788,6 +788,7 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
   useEffect(() => () => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (esRef.current)    esRef.current.close();
+    if ((window as any).__cupPollTimer) clearInterval((window as any).__cupPollTimer);
   }, []);
 
   // Lockout countdown
@@ -869,61 +870,88 @@ function PinKeypad({ edition, onClose }: { edition: any; onClose: () => void }) 
       return;
     }
 
-    // Step 3: open EventSource (GET — no buffering issues)
+    // Step 3: connect to the job stream
+    // Strategy: EventSource auto-reconnects on disconnect. When it reconnects,
+    // the server replays all stored events including "done" if already finished.
+    // We also poll /api/digest/job/:id/status every 5s as a belt-and-suspenders
+    // fallback in case EventSource is blocked (e.g. mobile background tab).
     setPhase("running"); setStatus("Connecting to server…"); setElapsed(0);
     setStep(0); setLogs([]); setStories(0);
     startTimer();
     addLog(`Starting ${edition.name} digest generation…`);
 
+    let finished = false;
+
+    const handleEvent = (msg: any) => {
+      if (finished) return;
+      switch (msg.type) {
+        case "start":
+          setStatus("Pipeline started…");
+          addLog(`Pipeline started for ${msg.edition}`);
+          break;
+        case "progress":
+          setStatus(msg.message || "Working…");
+          if (msg.step) setStep(msg.step);
+          if (msg.total) setTotal(msg.total);
+          addLog(msg.message || "…");
+          break;
+        case "log":
+          addLog(msg.message);
+          break;
+        case "heartbeat":
+          // Don't spam the log — just show we're alive on the first few
+          if (logs.length < 4) addLog("⏳ Pipeline running… (1-3 min)");
+          break;
+        case "done":
+          if (finished) return;
+          finished = true;
+          stopTimer();
+          setStories(msg.storiesCount || 20);
+          setStep(msg.total || 5);
+          setPhase("done");
+          setStatus("Digest ready!");
+          addLog(`✅ Done — ${msg.storiesCount} stories in ${msg.elapsed}s (digest #${msg.digestId})`);
+          if (esRef.current) { esRef.current.close(); esRef.current = null; }
+          clearInterval(pollTimer);
+          setTimeout(() => window.location.reload(), 1500);
+          break;
+        case "error":
+          if (finished) return;
+          finished = true;
+          stopTimer();
+          setPhase("error");
+          setErrorMsg(msg.message || "Generation failed.");
+          addLog(`❌ Error: ${msg.message}`);
+          if (esRef.current) { esRef.current.close(); esRef.current = null; }
+          clearInterval(pollTimer);
+          break;
+      }
+    };
+
+    // Open EventSource — it auto-reconnects on drop, server replays on reconnect
     const es = new EventSource(`/api/digest/job/${jobId}/stream`);
     esRef.current = es;
+    es.onmessage = (e) => { try { handleEvent(JSON.parse(e.data)); } catch {} };
+    es.onerror = () => { if (!finished) addLog("⚠️ Connection drop — auto-reconnecting…"); };
 
-    es.onmessage = (e) => {
+    // Belt-and-suspenders: poll job status every 5s directly
+    // This catches the case where EventSource is blocked (mobile bg, aggressive browser timeout)
+    const pollTimer = setInterval(async () => {
+      if (finished) { clearInterval(pollTimer); return; }
       try {
-        const msg = JSON.parse(e.data);
-        switch (msg.type) {
-          case "start":
-            setStatus("Pipeline started…");
-            addLog(`Pipeline started for ${msg.edition}`);
-            break;
-          case "progress":
-            setStatus(msg.message || "Working…");
-            setStep(msg.step || 0);
-            setTotal(msg.total || 5);
-            addLog(msg.message || "…");
-            break;
-          case "log":
-            addLog(msg.message);
-            break;
-          case "heartbeat":
-            // keep-alive ping every 10s — only log first one to show we're alive
-            if (logs.length < 5) addLog("⏳ Pipeline running… (this takes 1-3 min)");
-            break;
-          case "done":
-            stopTimer();
-            setStories(msg.storiesCount || 20);
-            setStep(msg.total || 5);
-            setPhase("done");
-            setStatus("Digest ready!");
-            addLog(`✅ Done — ${msg.storiesCount} stories in ${msg.elapsed}s (digest #${msg.digestId})`);
-            es.close();
-            setTimeout(() => window.location.reload(), 1500);
-            break;
-          case "error":
-            stopTimer();
-            setPhase("error");
-            setErrorMsg(msg.message || "Generation failed.");
-            addLog(`❌ Error: ${msg.message}`);
-            es.close();
-            break;
+        const r = await fetch(`/api/digest/job/${jobId}/status`);
+        if (!r.ok) return;
+        const job = await r.json();
+        if (job.status === "done" && job.result) {
+          handleEvent({ type: "done", ...job.result, total: 5 });
+        } else if (job.status === "error") {
+          handleEvent({ type: "error", message: job.error || "Generation failed." });
         }
       } catch {}
-    };
+    }, 5000);
 
-    es.onerror = () => {
-      // EventSource retries automatically — only error if phase is still running after a while
-      addLog("⚠️ Connection interrupted — retrying…");
-    };
+    // Store pollTimer for cleanup
+    (window as any).__cupPollTimer = pollTimer;
   }, [locked, phase, digits, attempts, edition.id, edition.name]);
 
   // Copy logs

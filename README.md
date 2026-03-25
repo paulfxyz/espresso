@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-3.3.2-red?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-3.3.3-red?style=for-the-badge)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
 ![Node.js](https://img.shields.io/badge/Node.js-20+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
@@ -523,6 +523,7 @@ Full history with engineering narrative: **[CHANGELOG.md](./CHANGELOG.md)**
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **3.3.3** | EventSource reconnect + 5s polling fallback (browser disconnect fix) |
 | **3.3.2** | Fix SSE replay (stored type:log stripped step/done fields), fix progress bar |
 | **3.3.1** | 2026-03-25 | Job-based SSE (EventSource GET), progress bar, log textarea, copy button |
 | **3.3.0** | 2026-03-25 | SSE streaming generate, auto-unpublish before regenerate, definitive PIN keypad fix |
@@ -556,7 +557,7 @@ Full history with engineering narrative: **[CHANGELOG.md](./CHANGELOG.md)**
 
 ## 🗺️ Roadmap
 
-**v3.3.2 shipped.** PIN keypad for digest generation (triple-tap logo), click-outside for All Stories grid, admin PIN settings, 222 RSS sources, Read Again button, QuoteCard theme-aware design, persistent admin login, landing→app language handoff, 502 timeout fix.
+**v3.3.3 shipped.** PIN keypad for digest generation (triple-tap logo), click-outside for All Stories grid, admin PIN settings, 222 RSS sources, Read Again button, QuoteCard theme-aware design, persistent admin login, landing→app language handoff, 502 timeout fix.
 
 ### v3.2 — Delivery & Channels
 - 📧 Email delivery (Postmark / Resend) — digest in your inbox at 6 AM

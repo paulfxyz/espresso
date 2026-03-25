@@ -1,7 +1,7 @@
 /**
  * @file server/routes.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.3.2
+ * @version 3.3.3
  *
  * Cup of News — REST API Routes
  *
@@ -100,7 +100,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
    * Public. Used by uptime monitors, Docker HEALTHCHECK, GitHub Actions.
    */
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", version: "3.3.2" });
+    res.json({ status: "ok", version: "3.3.3" });
   });
 
   // ── Setup ──────────────────────────────────────────────────────────────────
@@ -504,6 +504,23 @@ export function registerRoutes(httpServer: Server, app: Express) {
     req.on("close", () => {
       const idx = job.listeners.indexOf(write);
       if (idx !== -1) job.listeners.splice(idx, 1);
+    });
+  });
+
+
+  /**
+   * GET /api/digest/job/:id/status
+   * Simple JSON status check — used as a polling fallback when EventSource drops.
+   * Returns { status, result?, error? }
+   */
+  app.get("/api/digest/job/:id/status", (req, res) => {
+    const job = jobs.get(req.params.id);
+    if (!job) return res.status(404).json({ error: "Job not found." });
+    res.json({
+      status: job.status,
+      edition: job.edition,
+      result: job.result,
+      error: job.error,
     });
   });
 

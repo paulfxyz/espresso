@@ -11,40 +11,44 @@
 ##   Each edition uses its own native-language RSS source pool and writes in
 ##   the target language via Gemini 2.5 Pro.
 ##
-## WHY TWICE A DAY (v3.2.0):
+## HOW IT WORKS (v3.4.2+):
+##   Uses the two-step job API to avoid HTTP proxy timeouts:
+##
+##   Step 1 — POST /api/digest/start-job { pin, edition }
+##     Returns immediately (~50ms) with { jobId }.
+##     The server starts the pipeline asynchronously.
+##
+##   Step 2 — GET /api/digest/job/:id/status
+##     Polled every 10 seconds until status = "done" or "error".
+##     The pipeline takes 60-250 seconds depending on Jina + OpenRouter load.
+##     We poll for up to 6 minutes (36 attempts × 10s) before giving up.
+##
+##   Why not the old POST /api/digest/generate endpoint:
+##     That endpoint held the HTTP connection open for the full pipeline duration.
+##     Fly.io's proxy has a 75s idle timeout — it drops the connection and returns
+##     502/504 before the pipeline finishes. The job system avoids this entirely
+##     by returning immediately and streaming progress via SSE or polling.
+##
+## WHY TWICE A DAY (v3.2.1):
 ##   6:00 AM GMT — Morning edition: overnight + early news cycle.
 ##   4:00 PM GMT — Afternoon edition: midday developments, markets close,
 ##                 major press conferences typically land before this window.
-##   The 409 guard (digest already exists) ensures idempotency — if a run
-##   fires twice for the same edition slot, the second call is a no-op.
 ##
 ## WHY 9 EDITIONS (v3.1.0+):
-##   v3.0.0 shipped 7 editions (en, fr, de, es, pt, zh, ru).
-##   v3.1.0 adds Turkish (tr) and Italian (it) for a total of 9.
-##   The principle: 1 edition = 1 language.
-##
-## EDITIONS:
-##   en  — English (global)         🌐
-##   fr  — Français                 🇫🇷
-##   de  — Deutsch                  🇩🇪
-##   es  — Español                  🇪🇸
-##   pt  — Português                🇧🇷
-##   zh  — 中文 (Chinese)            🇨🇳
-##   ru  — Русский (Russian)        🇷🇺
-##   tr  — Türkçe (Turkish)         🇹🇷
-##   it  — Italiano (Italian)       🇮🇹
+##   en, fr, de, es, pt, zh, ru, tr, it — 1 edition = 1 language.
 ##
 ## REQUIRED SECRETS (Settings → Secrets → Actions):
-##   ESPRESSO_URL       — https://app.cupof.news
-##   ESPRESSO_ADMIN_KEY — admin password
+##   ESPRESSO_URL        — https://app.cupof.news
+##   ESPRESSO_ADMIN_KEY  — admin password (used for the x-admin-key header)
 ##
-## OPTIONAL VARIABLE:
-##   AUTO_PUBLISH=true  — auto-publish each digest without manual review
+## REQUIRED VARIABLES (Settings → Variables → Actions):
+##   AUTO_PUBLISH=true   — already set; controls auto-publish after generation
 ##
-## TIMING NOTE:
-##   Gemini 2.5 Pro takes ~30-90s per edition.
-##   9 editions run sequentially = ~5-10 minutes total per trigger.
-##   The 20-minute job timeout covers both normal runs and retries.
+## DIGEST PIN:
+##   The job API uses the digest PIN (default: 123456) not the admin key.
+##   PIN is set via admin panel → "Digest Generation PIN" card.
+##   Default PIN is 123456. If you change it, update DIGEST_PIN secret.
+##   Falls back to 123456 if DIGEST_PIN secret not set.
 ##
 
 name: Digest Generation — All 9 Editions (6 AM + 4 PM GMT)
@@ -94,62 +98,110 @@ jobs:
 
       - name: Generate digest — ${{ matrix.edition }}
         if: ${{ github.event.inputs.edition == '' || github.event.inputs.edition == matrix.edition }}
+        env:
+          APP_URL: ${{ secrets.ESPRESSO_URL }}
+          DIGEST_PIN: ${{ secrets.DIGEST_PIN || '123456' }}
+          EDITION: ${{ matrix.edition }}
         run: |
-          echo "🌍 Generating edition: ${{ matrix.edition }}"
+          echo "🌍 Generating edition: $EDITION"
           echo "⏰ Trigger time: $(date -u '+%Y-%m-%d %H:%M UTC')"
 
-          RESPONSE=$(curl -s -o /tmp/response_${{ matrix.edition }}.json -w "%{http_code}" \
-            -X POST "${{ secrets.ESPRESSO_URL }}/api/digest/generate" \
-            -H "x-admin-key: ${{ secrets.ESPRESSO_ADMIN_KEY }}" \
+          # ── Step 1: Start the job ────────────────────────────────────────────
+          # Returns immediately with { jobId }. The server runs the pipeline async.
+          echo "📤 Starting job for $EDITION..."
+          START_RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST "${APP_URL}/api/digest/start-job" \
             -H "Content-Type: application/json" \
-            --max-time 300 \
-            -d '{"edition": "${{ matrix.edition }}"}')
+            --max-time 30 \
+            -d "{\"pin\": \"${DIGEST_PIN}\", \"edition\": \"${EDITION}\"}")
 
-          echo "HTTP status: $RESPONSE"
-          echo "Response:"
-          cat /tmp/response_${{ matrix.edition }}.json
+          START_HTTP=$(echo "$START_RESPONSE" | tail -1)
+          START_BODY=$(echo "$START_RESPONSE" | head -1)
 
-          # 409 = digest already exists for this slot = not an error (idempotent)
-          if [ "$RESPONSE" = "409" ]; then
-            echo "ℹ️  Digest already exists for ${{ matrix.edition }} this slot — skipping"
-            exit 0
-          fi
+          echo "Start HTTP: $START_HTTP"
+          echo "Start body: $START_BODY"
 
-          if [ "$RESPONSE" != "200" ]; then
-            echo "❌ Generation failed for ${{ matrix.edition }} with status $RESPONSE"
+          if [ "$START_HTTP" != "200" ]; then
+            echo "❌ Failed to start job for $EDITION (HTTP $START_HTTP)"
             exit 1
           fi
 
-          echo "✅ ${{ matrix.edition }} digest generated"
-
-      - name: Auto-publish — ${{ matrix.edition }}
-        if: ${{ vars.AUTO_PUBLISH == 'true' && (github.event.inputs.edition == '' || github.event.inputs.edition == matrix.edition) }}
-        run: |
-          # Extract digestId from the generation response
-          DIGEST_ID=$(python3 -c "
+          # Extract jobId from JSON response
+          JOB_ID=$(echo "$START_BODY" | python3 -c "
           import sys, json
           try:
-              with open('/tmp/response_${{ matrix.edition }}.json') as f:
-                  d = json.load(f)
-              print(d.get('digestId', ''))
-          except:
+              d = json.loads(sys.stdin.read())
+              print(d.get('jobId', ''))
+          except Exception as e:
               print('')
           ")
 
-          if [ -z "$DIGEST_ID" ]; then
-            echo "ℹ️  No digest ID to publish (may already have been published or skipped)"
-            exit 0
+          if [ -z "$JOB_ID" ]; then
+            echo "❌ No jobId in response: $START_BODY"
+            exit 1
           fi
 
-          echo "📢 Publishing digest $DIGEST_ID for ${{ matrix.edition }}..."
+          echo "✅ Job started: $JOB_ID"
 
-          PUB_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST "${{ secrets.ESPRESSO_URL }}/api/digest/$DIGEST_ID/publish" \
-            -H "x-admin-key: ${{ secrets.ESPRESSO_ADMIN_KEY }}" \
-            -H "Content-Type: application/json")
+          # ── Step 2: Poll for completion ──────────────────────────────────────
+          # Poll /api/digest/job/:id/status every 10s for up to 6 min (36 attempts)
+          # Pipeline typically takes 60-250s. We give it 360s max.
+          MAX_ATTEMPTS=36
+          ATTEMPT=0
+          FINAL_STATUS=""
 
-          if [ "$PUB_RESPONSE" = "200" ]; then
-            echo "✅ ${{ matrix.edition }} published"
-          else
-            echo "⚠️  Publish returned $PUB_RESPONSE for ${{ matrix.edition }}"
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            ELAPSED=$((ATTEMPT * 10))
+
+            sleep 10
+
+            STATUS_RESPONSE=$(curl -s "${APP_URL}/api/digest/job/${JOB_ID}/status" --max-time 15 2>/dev/null)
+            STATUS=$(echo "$STATUS_RESPONSE" | python3 -c "
+          import sys, json
+          try:
+              d = json.loads(sys.stdin.read())
+              print(d.get('status', 'unknown'))
+          except:
+              print('error')
+          ")
+
+            echo "  [$ELAPSED s] Status: $STATUS"
+
+            if [ "$STATUS" = "done" ]; then
+              STORY_COUNT=$(echo "$STATUS_RESPONSE" | python3 -c "
+          import sys, json
+          try:
+              d = json.loads(sys.stdin.read())
+              print(d.get('storiesCount', '?'))
+          except:
+              print('?')
+          ")
+              echo "✅ $EDITION digest done — $STORY_COUNT stories (${ELAPSED}s)"
+              FINAL_STATUS="done"
+              break
+            fi
+
+            if [ "$STATUS" = "error" ]; then
+              ERROR_MSG=$(echo "$STATUS_RESPONSE" | python3 -c "
+          import sys, json
+          try:
+              d = json.loads(sys.stdin.read())
+              print(d.get('error', 'unknown error'))
+          except:
+              print('unknown error')
+          ")
+              echo "❌ $EDITION job failed: $ERROR_MSG"
+              FINAL_STATUS="error"
+              break
+            fi
+
+            # "running" or "pending" — keep polling
+          done
+
+          if [ "$FINAL_STATUS" != "done" ]; then
+            if [ -z "$FINAL_STATUS" ]; then
+              echo "❌ Timed out after ${MAX_ATTEMPTS} polling attempts (${ELAPSED}s) for $EDITION"
+            fi
+            exit 1
           fi

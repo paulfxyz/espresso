@@ -668,36 +668,66 @@ Return ONLY valid JSON, no markdown:
     });
 
     if (!res.ok) {
-      // API error — fail open, accept the image
-      console.warn(`  ⚠️  Vision check API error ${res.status} — accepting image`);
+      // 400 = image URL is invalid/unreachable by the vision API
+      // Treat as rejection — a broken image URL is not a valid candidate
+      if (res.status === 400) {
+        console.warn(`  ⚠️  Vision check: image URL rejected by API (${res.status}) — skipping`);
+        return 0;
+      }
+      // Other API errors (429, 500, etc.) — fail open
+      console.warn(`  ⚠️  Vision check API error ${res.status} — accepting image (fail open)`);
       return 7;
     }
 
     const data = await res.json() as { choices: Array<{ message: { content: string } }> };
     const raw = (data.choices?.[0]?.message?.content ?? "").trim()
-      .replace(/^```json\s*/m, "").replace(/```$/m, "").trim();
+      .replace(/^\`\`\`json\s*/m, "").replace(/\`\`\`$/m, "").trim();
 
-    // Find the JSON object — handle any surrounding text
+    // Try to parse structured JSON first
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}") + 1;
-    if (start < 0 || end <= start) {
-      console.warn(`  ⚠️  Vision check unparseable response — accepting image`);
-      return 7;
+    if (start >= 0 && end > start) {
+      try {
+        const result = JSON.parse(raw.slice(start, end)) as {
+          is_photo?: boolean;
+          score?: number;
+          verdict?: string;
+        };
+        const score = typeof result.score === "number" ? result.score : 7;
+        const isPhoto = result.is_photo !== false;
+        if (!isPhoto) return 0;
+        return score;
+      } catch { /* fall through to prose parsing */ }
     }
 
-    const result = JSON.parse(raw.slice(start, end)) as {
-      is_photo?: boolean;
-      score?: number;
-      verdict?: string;
-    };
+    // Prose response fallback — model gave a description instead of JSON.
+    // This typically means the model is uncertain or the image is unusual.
+    // Parse key signals from the text.
+    const lower = raw.toLowerCase();
 
-    const score = typeof result.score === "number" ? result.score : 7;
-    const isPhoto = result.is_photo !== false;  // default true if missing
+    // Strong rejection signals in prose
+    const rejectSignals = [
+      "political cartoon", "cartoon", "illustration", "drawing", "diagram",
+      "poster", "infographic", "painting", "screenshot", "video game",
+      "scientific illustration", "anatomical", "museum", "not a photograph",
+      "not real", "not relevant", "unrelated", "reject",
+    ];
+    const acceptSignals = [
+      "photograph", "news photo", "real photo", "editorial", "accept",
+      "relevant", "appropriate", "shows the", "depicts the",
+    ];
 
-    // If the model determined it's not a real photo at all, score it 0
-    if (!isPhoto) return 0;
+    const rejectCount = rejectSignals.filter(s => lower.includes(s)).length;
+    const acceptCount = acceptSignals.filter(s => lower.includes(s)).length;
 
-    return score;
+    if (rejectCount > acceptCount) {
+      console.warn(`  ⚠️  Vision check prose → reject (${rejectCount} reject signals)`);
+      return 1;
+    }
+
+    // No clear signal — moderate acceptance (not confident)
+    console.warn(`  ⚠️  Vision check prose → accept cautiously (${acceptCount} accept signals)`);
+    return 6;
 
   } catch (err) {
     // Network error, timeout — fail open

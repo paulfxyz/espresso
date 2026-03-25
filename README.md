@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-3.4.5-red?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-3.4.6-red?style=for-the-badge)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
 ![Node.js](https://img.shields.io/badge/Node.js-20+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
@@ -252,36 +252,79 @@ score = ratioScore × 0.5 + sizeScore × 0.3 + sizeBonus × 0.2
 
 **Result:** 8/8 test stories got real editorial photos. Success rate jumped from ~60% to ~95%.
 
-#### Generation 5: Dimension validation for OG images (v3.4.5)
+#### Generation 5: OG dimension validation (v3.4.2)
 
-**Problem discovered in v3.4.1:** Even with URL-pattern validation, some OG images are legitimate landscape URLs but portrait crops. Example: `s1.reutersmedia.net/resources/r/?m=...` — no portrait hint in the URL, but the actual image is 600×800 (portrait, ratio 0.75). Similarly, NYT sends portrait crops via CDN paths that don't contain `vertical` or `portrait`.
+**Problem:** Even with URL-pattern validation, some OG images are legitimate landscape URLs but portrait crops. Reuters CDN paths like `s1.reutersmedia.net/resources/r/?m=...` contain no portrait hint, but the actual image is 600×800 (ratio 0.75). NYT portrait crops appear at landscape-sounding CDN paths.
 
-**Two-pass validation in v3.4.5:**
-
-**Pass 1 — URL patterns (fast, synchronous):** Regex-reject URLs containing `vertical`, `portrait`, `2by3`, `9x16`, `tallimage`, `_tall`, `-tall`, etc.
-
-**Pass 2 — Header byte inspection (async, ~4s timeout):** If Pass 1 succeeds, fetch only the first 1KB of the image file and parse dimension headers:
-- JPEG: scan SOF markers (0xFF 0xC0–0xCF) for width/height
-- PNG: read bytes 16–23 of the IHDR chunk
-- WebP: read VP8 chunk width/height at bytes 26–29
+**Fix:** Fetch only the first 1KB of the image file (`Range: bytes=0-1023`) and parse dimension headers in-process:
+- JPEG: scan SOF markers (0xFF 0xC0–0xCF) for width/height bytes
+- PNG: read IHDR chunk at bytes 16–23
+- WebP: read VP8 chunk at bytes 26–29
 
 If `width/height < 1.3` or `width < 400px` → reject and fall through to Wikimedia.
 
-**Why 1KB fetch and not full image:**
-A JPEG dimension header is in the first SOF marker, usually within the first 300–600 bytes. PNG is always at byte 16. We request `bytes=0-1023` — this is 1KB regardless of whether the image is 50KB or 5MB. The dimension check costs ~200ms per image and fires only on images that passed URL validation.
+**Fail-open design:** Some CDNs (Reuters, AP, AFP) block Range requests with 403. When that happens, `getImageDimensions()` returns `null` and we trust the URL validator. False positives (accepting a portrait) are better than false negatives (rejecting a real landscape) since the Wikimedia fallback is now good quality.
 
-**Bottleneck identified:** Some CDNs (Reuters, AP, AFP) block `Range: bytes=0-1023` requests and return a 403. In that case `getImageDimensions()` returns `null` and we trust the URL validation result (fail open). This is the correct trade-off: false positives (accepting a portrait image) are better than false negatives (rejecting a valid landscape image) since the Wikimedia fallback is now good enough.
+**Cost:** ~200ms per OG image. Only fires after URL validation passes. All 20 checks run in parallel via `Promise.all` — total wall-clock cost is ~200ms, not 20×200ms.
 
-#### Summary table
+#### Generation 6: object-contain + full-bleed CSS (v3.4.1–v3.4.3)
+
+This generation is purely visual — the image pipeline hadn't changed, but the display was wrong.
+
+**v3.4.1 — object-contain:** Images were rendered with `object-cover` inside a fixed-height card. `object-cover` fills the container by cropping edges — fine for background images, wrong for editorial news photos where cropping removes the subject. Mohamed Salah's photo became a close-up of a crowd behind him. Fix: `object-contain` + `bg-black` for letterboxing.
+
+**v3.4.3 — Full-bleed breakout:** The image was inside `<article className="max-w-2xl mx-auto px-4">`. Even with `w-full`, the image was capped at ~672px and had visible padding on both sides. Fix: negative margin breakout — `-mx-4 sm:-mx-8 lg:-mx-12` — cancels the article's padding exactly, making the image run edge-to-edge. Aspect ratio: `aspect-[16/7]` (wider than 16:9 — more cinematic, less vertical letterbox). Back to `object-cover object-center` — fills the frame, crops symmetrically, no black bars.
+
+**Lesson:** Displaying images correctly is harder than finding them. `object-cover` vs `object-contain`, `max-w` constraint breakout, and `aspect-ratio` all interact in non-obvious ways.
+
+#### Generation 7: Non-English editions getting 0 Wikimedia images (v3.4.6)
+
+This was the most embarrassing failure — discovered by auditing the German edition and finding 15/20 stories with `picsum.photos` fallback images.
+
+**Root cause:** Wikimedia Commons is indexed almost entirely in English. The query generator received German story titles like `"Salahs Abschied von Liverpool"` and generated German queries: `"Mohamed Salah Liverpool Fußball"`. Wikimedia returned 0 results. The pipeline fell silently through to picsum.
+
+This failure mode was invisible in the English edition (where it worked fine), and the German edition was never audited story-by-story until a user reported it.
+
+**Fix — three layers:**
+
+1. **Explicit rule in the prompt:** Rule 1, bolded: `⚠️ ALWAYS write ALL 5 queries in ENGLISH — even if the story title is in French, German, Russian, Chinese`. With worked examples: a German Salah headline → English Wikimedia queries.
+
+2. **sourceTitleHint:** The original RSS source article title is often in English even for non-EN editions (BBC, Reuters, NYT are English even when the DE edition uses them for global stories). This English title is now passed alongside the translated title to the query generator, injected as `"English source title (use this to understand the topic in English)"`.
+
+3. **Non-English story examples in prompt:** Added three full worked examples — a German story, a Russian story, a French story — each showing the correct English output format.
+
+**Result:** DE edition went from 0 Wikimedia images to 15/20 in the next generation. Overall success rate across all 9 editions: 83%.
+
+#### The filename relevance check — a cautionary tale (v3.4.6, then reverted)
+
+During v3.4.6, we added a filename-based relevance check: after Wikimedia returns a candidate, compare words from the search query against the Wikimedia filename. Accept if ratio ≥ 0.2.
+
+**This made things worse, not better.** Within one generation:
+- "Meta Google social media addiction" → `Minecraft_Classic_screenshot.jpg` — "meta" appears as a substring in "Minecraft"
+- "hot-cold freezing paradox" → `Hot_air_balloon_over_Dresden.jpg` — "hot" matches "hot"
+- "insect size evolution" → `Insetti_Melolonta_Vulgaris_sistema_respiratorio.jpg` — Italian "insetti" for "insects"
+
+Substring matching is the wrong tool for semantic relevance. The check was actively *selecting* wrong images rather than filtering them out, because short common words appear as substrings of unrelated longer words.
+
+**Lesson learned:** Naive string matching on filenames is not a proxy for image relevance. The only reliable way to validate image relevance is to look at the image itself — using a vision-capable model. This is the next engineering task.
+
+**What the correct solution looks like:** Pass the image URL to a cheap vision model (`meta-llama/llama-3.2-11b-vision-instruct` at $0.049/M tokens, or `google/gemma-3-12b-it:free`). Ask it: "Is this image appropriate for a story titled X? Score 0–10." Accept images scoring ≥ 6. This adds ~1 API call per story with no-photo, but eliminates Minecraft screenshots next to lawsuit stories. Not yet implemented — the OpenRouter 502 failure during prototyping blocked it.
+
+#### Current summary table
 
 | Version | Method | Success Rate | Notes |
 |---------|--------|--------------|-------|
 | v1.x | og:image only | ~50% | Missing half of stories |
-| v2.x | Jina + direct HTML + SVG fallback | ~80% | SVG looks good, but not photos |
-| v3.3.7 | AI → Wikipedia single query | ~60% | Regressed — AI too often returned flags/logos |
-| v3.4.0 | AI 5-query → Wikimedia scoring | ~95% | Major improvement |
-| v3.4.1 | + object-contain (no crop) | ~95% | Visual quality fix — no distortion |
-| v3.4.5 | + OG dimension validation (header bytes) | ~97% | Catches portrait OG images with landscape URLs |
+| v2.x | Jina + direct HTML + SVG fallback | ~80% | SVG looks good, but not editorial photos |
+| v3.3.7 | AI → Wikipedia single query | ~60% | Regressed — flags, logos, maps |
+| v3.4.0 | AI 5-query → Wikimedia Commons | ~80% | EN good, non-EN broken (queries in wrong language) |
+| v3.4.1 | + object-contain (no crop) | ~80% | Visual quality fix — no focal-point cropping |
+| v3.4.2 | + OG dimension validation | ~82% | Catches portrait OG with landscape CDN URLs |
+| v3.4.3 | + Full-bleed CSS, aspect-[16/7] | ~82% | Images fill the card edge-to-edge |
+| v3.4.3 | + gemini-2.5-flash queries | ~82% | Better instruction-following for query gen |
+| v3.4.3 | + Wikimedia 1280px thumbs | ~82% | ~10× faster loading (200KB vs 5MB originals) |
+| v3.4.6 | + English queries for non-EN editions | ~83% | DE: 0→15, ES: 0→16, TR: 10→15 Wikimedia images |
+| future | + Vision model relevance scoring | ~95%+ | The unsolved problem — needs vision API |
 
 ---
 
@@ -412,6 +455,136 @@ We shipped Option B with a twist: `refetch()` is called, and if the returned dig
 
 The edge case: the `staleTime` for digest queries is set to 5 minutes. If you hit refresh within 5 minutes of the last fetch, React Query serves the cache without a network call. This is intentional — the digest doesn't change more than once a day.
 
+### v3.3.x: The 502 Generation Timeout — A Two-Week Saga
+
+This was the most persistent bug in the project's history. The digest generation endpoint returned 502 for weeks before the root cause was finally isolated.
+
+**The symptom:** `POST /api/digest/generate` returned 502 Bad Gateway. Server logs showed the pipeline completing successfully. The digest appeared in the database. But the client always saw 502.
+
+**Red herring #1 — Jina 429 rate limiting:** Jina Reader returned 429 frequently during batch extraction. We added retry logic, exponential backoff, and parallel batching with concurrency limits. The 502s continued.
+
+**Red herring #2 — Node.js keepAliveTimeout:** Fly.io documentation suggested setting `keepAliveTimeout` and `headersTimeout`. We set these on the HTTP server. The 502s continued.
+
+**Red herring #3 — SSE streaming:** We rewrote generation to use Server-Sent Events, streaming progress to the client. The 502s stopped — but we had solved the wrong problem. SSE itself still broke for some users because we used `fetch() + ReadableStream` on the client, which Chrome and Safari buffer in memory before delivering to JavaScript.
+
+**The actual root cause:** Two separate bugs working together.
+
+Bug 1: Fly.io's HTTP proxy drops idle connections after 75 seconds. The pipeline takes 30–250 seconds. The proxy was dropping the connection mid-pipeline, returning 502 to the client even though the server finished successfully.
+
+Bug 2: `fetch()` to OpenRouter had no `AbortController` and no timeout. One slow OpenRouter response (model loading, rate limit backoff) caused the pipeline to hang indefinitely. The 75-second proxy timeout then fired on an already-hung request.
+
+**The fix that actually worked:** Two-step job system. `POST /api/digest/start-job` returns a `jobId` in ~50ms. `GET /api/digest/job/:id/stream` opens a native `EventSource` connection that streams heartbeats every 10 seconds. Each heartbeat resets Fly's 75-second idle timer. The connection stays alive indefinitely. `AbortController(240s)` was added to all OpenRouter calls.
+
+**Lesson:** When debugging distributed system timeouts, draw the full request path on paper first — client → Fly proxy → Node.js → external API. Each hop has its own timeout. The 502 told us nothing about *which* hop failed. Server logs (which showed success) told us the pipeline completed, so the failure was in the proxy layer, not the application.
+
+### v3.3.x: `useRef` for SSE Stale Closures
+
+The SSE streaming UI had a maddening bug: the success handler never fired even though the `done` event arrived.
+
+The cause: React's `useState` setter captures the state value at closure creation time. The `EventSource` `onmessage` handler was created with a reference to the initial `isFinished = false` state. When the `done` event arrived, the closure still held the old `false` value. The `setIsFinished(true)` call was executing, but the `if (!isFinished) { doSuccessAction() }` guard was checking the captured-at-creation value, which was always `false`.
+
+The fix: `useRef` instead of `useState` for the finished flag. `useRef` returns a mutable object whose `.current` property is not subject to closure capture — reading `finishedRef.current` always reads the live value.
+
+```tsx
+const finishedRef = useRef(false);
+// In EventSource handler:
+if (data.type === "done" && !finishedRef.current) {
+  finishedRef.current = true;
+  // safe to do success action
+}
+```
+
+**Lesson:** In React, any callback that survives across renders (EventSource handlers, setTimeout, setInterval) will capture stale closure state unless you use `useRef` or the functional update form of `setState`.
+
+### v3.4.x: GitHub Actions Cron Secrets — The Silent Failure
+
+The daily digest cron workflow failed silently for weeks. Every run showed "Cancelled" for 8 editions and "Failed in 2 seconds" for the English edition.
+
+**Root cause:** The `ESPRESSO_ADMIN_KEY` secret was never set in the GitHub repository's Actions secrets. The `ESPRESSO_URL` secret was also missing for the first few runs.
+
+The failure mode was completely silent. GitHub Actions renders missing secrets as empty strings in shell scripts, not as errors. The `curl` command ran with `-H "x-admin-key: "` (empty header) and received a 401. The shell then exited with code 1. GitHub never warned that a referenced secret was undefined.
+
+**Making it worse:** Even after secrets were added, the workflow used `--max-time 120` (120s) for a pipeline that takes 30–250 seconds. When OpenRouter was slow, the curl timed out, returning a 504. This looked identical to the previous failure, obscuring that progress had been made.
+
+**The layered fix:**
+1. Set both `ESPRESSO_URL` and `ESPRESSO_ADMIN_KEY` in GitHub → Settings → Secrets → Actions
+2. Set `AUTO_PUBLISH=true` as an Actions variable
+3. Rewrite the workflow to use `start-job` + polling (no timeout risk — each poll is a fresh 15s HTTP request)
+4. Bump `--max-time` to 300s as a safety net
+
+**Lesson:** Always test your CI/CD with a manual `workflow_dispatch` run before relying on scheduled triggers. GitHub Actions will not tell you that a secret is missing — it will just pass an empty string and let the script fail in a way that looks like an application error.
+
+### v3.4.x: Edition Independence — The Invisible Overlap Problem
+
+After building 9 language editions, we assumed they were generating distinct content. They weren't.
+
+Analysis of the French edition's source URLs showed 38% overlap with the English edition. The Italian edition had 45% overlap. Both editions were pulling from the same BBC, Reuters, and NYT wire stories and generating translations rather than culturally distinct journalism.
+
+**Why it happened:** The RSS source pools for non-EN editions included English-language wire services as "global context" sources. When there weren't enough native-language stories to fill 60 candidate articles, the pipeline supplemented with English sources. The AI then chose the biggest stories — which were the English wires — and wrote summaries in the target language. Technically correct, but editorially the Italian reader was getting a translated version of the English digest, not an Italian one.
+
+**The fix:**
+1. **Prompt instruction:** Added "EDITION INDEPENDENCE" block for all non-EN editions: "AT LEAST 8 of 20 stories must be on topics not primarily from Anglophone media. AVOID the same major wire stories that would dominate the English edition."
+2. **RSS source audit:** Increased the proportion of native-language sources in each edition's pool. Italian edition now has more ANSA, Corriere, Il Post. French has more Le Monde, RFI, France 24.
+
+**Lesson:** You cannot audit edition distinctiveness by looking at the output language. You have to audit the source URL overlap. Two editions writing in different languages about the same Reuters story is not genuine multilingual journalism.
+
+### v3.4.x: The Two-Site Architecture Problem
+
+Cup of News has two separate deployments that look like one product to users:
+- `cupof.news` — static HTML landing page on Siteground
+- `app.cupof.news` — Node.js application on Fly.io
+
+This architecture is simple and cheap (Siteground shared hosting + Fly.io hobby plan), but it creates a recurring deployment problem: every version bump requires two separate deployments. Forgetting one means the version shown on the landing page (`v3.2.0`) doesn't match the app (`v3.4.6`). We went through this multiple times.
+
+**The version audit checklist we now run for every release:**
+- `package.json` version
+- `server/routes.ts` health endpoint (`/api/health` version string)
+- All `@version` headers in server/*.ts and client/*.tsx
+- `landing/index.html` (25+ occurrences — badge, footer, JS comment, all 9 language strings)
+- `README.md` badge
+- GitHub release tag
+
+**Why not consolidate to one host?** Siteground provides email hosting for `@cupof.news` addresses that would be lost by moving. Fly.io doesn't provide email. The two-host setup is a deliberate trade-off, not an oversight.
+
+**Lesson:** Every time you split a product across two deployment targets, you create a class of bugs that will recur forever — version drift, cache drift, feature drift. Make it impossible to deploy one without the other, or document the checklist and enforce it manually.
+
+### v3.4.x: Cloudflare CDN for a Static Landing Page
+
+The cupof.news landing page is a single 122KB HTML file served from Siteground shared hosting. Adding Cloudflare CDN required understanding the DNS delegation model.
+
+**The ownership chain:**
+- Domain registered at: Namecheap
+- DNS controlled by: (originally) Siteground nameservers
+- Hosting: Siteground shared (cupof.news) + Fly.io (app.cupof.news)
+
+Cloudflare works by replacing the nameservers. You add the domain to Cloudflare, it scans existing DNS records, then you update the nameservers at the registrar (Namecheap) to point to Cloudflare's servers.
+
+**The key mistake to avoid:** Cloudflare's automatic DNS scan sets all A records to "Proxied" (orange cloud) by default. This breaks:
+- `app.cupof.news` → must be DNS Only (grey cloud) — Fly.io handles its own TLS and certificate. Proxying through Cloudflare breaks Fly's health checks and certificate validation.
+- `ftp.cupof.news` → must be DNS Only — FTP is not HTTP; Cloudflare can't proxy it.
+- `mail.cupof.news`, `ssh.cupof.news` → DNS Only — same reason.
+- `autoconfig`, `autodiscover` → DNS Only — email client autoconfiguration must resolve directly.
+
+Only `cupof.news` (root) and `www.cupof.news` should be proxied.
+
+**SSL mode:** Set to "Full" (not "Full Strict"). Siteground shared hosting uses a shared certificate that covers `*.siteground.biz` domains, not `cupof.news` directly. "Full Strict" requires a certificate matching the exact hostname — it will fail. "Full" validates that a certificate exists but not that it matches the hostname.
+
+**Lesson:** Before adding a CDN, draw your full DNS chain: registrar → nameservers → A records → origin servers. Understand which services can be proxied (HTTP only) and which need to bypass the proxy entirely.
+
+### Opinion: What I Would Do Differently
+
+After building Cup of News across 25+ versions and 3 weeks of daily use, here is what I would change if starting over:
+
+**1. Use a job queue from day one.** The 502 problem exists entirely because we started with a synchronous HTTP endpoint for a 90-250 second operation. A proper job queue (BullMQ, or even a simple SQLite-backed queue) would have made this architecture obvious from the start. Every long-running operation should be a job, not an HTTP response.
+
+**2. Image quality is a distribution problem, not a search problem.** We spent 5 versions improving the *search* (better queries, better models, better filters). The unsolved problem is that Wikimedia Commons is not a news photo archive — it's a general-purpose media repository. For a news digest, you want Getty Images or AP Photos quality. The correct long-term solution is not better Wikimedia queries; it's a different image source. Paid news photo APIs (AP Content API, Getty Creative API) are expensive ($500+/month) but are genuinely the right product for this use case. The hacky alternative: use the newspaper's own OG image when it's landscape and of sufficient quality (which is already Tier 1 of our pipeline).
+
+**3. Test each edition independently, not just the default English one.** The non-English Wikimedia query failure existed from v3.4.0 but wasn't caught for weeks because we tested in English. Each edition has unique failure modes — language mismatch in queries, weaker native source pools, different AI behaviors for non-Latin scripts. Per-edition regression testing should be part of every generation check.
+
+**4. The editorial prompt is the most underused feature.** The system supports a user-defined editorial prompt that shapes every story selection and framing. In practice, most users set it once and forget it. The digest quality for a finance person who writes "I am a fund manager focused on EM equities" is dramatically better than the generic digest. This feature deserves a first-run onboarding flow, not a buried admin panel setting.
+
+**5. SQLite is the right call — but add WAL mode from day one.** SQLite without WAL mode serializes all writes. On a single-user app with once-daily generation this doesn't matter. But if you ever run parallel edition generation (which we do — 9 editions per day), write contention can cause intermittent failures. `PRAGMA journal_mode=WAL` should be in the initialization script, not something you add later.
+
 ---
 
 ## 🐛 Bugs Fixed — The Full Record
@@ -433,11 +606,18 @@ A complete log of real problems found during development. Useful if you fork thi
 | 1.4.1 | SVG logos as story photos | Euronews/Wired logo as hero image | OG validator didn't exist | `isValidOgImage()` validator |
 | 1.5.1 | 50% stories missing images | WSJ, Bloomberg, AFP never had photos | Jina doesn't expose OG for these feeds | Direct HTML Range fetch fallback |
 | 3.3.7 | AI Wikipedia single-query regression | Flags, logos, maps instead of photos | AI returned country/brand names as Wikipedia subjects | 5-query approach with Wikimedia Commons scoring (v3.4.0) |
-| 3.4.0 | Portrait OG images accepted | Close-cropped face shots despite URL validation | Portrait images with landscape CDN URLs slip through regex | Header byte inspection for actual dimensions (v3.4.5) |
+| 3.4.0 | Portrait OG images accepted | Close-cropped face shots despite URL validation | Portrait images with landscape CDN URLs slip through regex | Header byte inspection for actual dimensions (v3.4.6) |
 | 3.4.0 | object-cover distorted images | Images cropped at wrong focal point | `object-cover` fills container by cropping edges | `object-contain` + `aspect-video` uniform card height (v3.4.1) |
 | 3.2.2 | v3.2.0 deploy never happened | Live site stayed at v3.0.0 | `fly deploy` never run after v3.2.0 | Added deploy to sprint checklist; always run flyctl + FTP |
 | 3.3.0 | fetch+ReadableStream SSE buffered | UI frozen 2min then all events arrive | Chrome/Safari buffer fetch response bodies | Native `EventSource` (GET) + job-based two-step API (v3.3.1) |
 | 3.3.4 | OpenRouter fetch() no timeout | Pipeline hung forever | `fetch()` with no `AbortController` = infinite wait | 240s AbortController on every OpenRouter call |
+| 3.4.0 | Non-EN editions: 0 Wikimedia images | German/French digests got 100% picsum | Wikimedia indexed in English; AI generated queries in story's native language | Rule 1 in query prompt: "ALWAYS write queries in English" + sourceTitleHint |
+| 3.4.0 | Filename relevance check backfired | "Meta" story → Minecraft screenshot | Substring "meta" appears in "Minecraft"; hot air balloon for "hot" paradox story | Removed filename check; correct fix = vision model relevance scoring |
+| 3.4.0 | PNG diagrams from Wikimedia | Data charts and maps appearing as story photos | PNG files on Wikimedia are usually diagrams/charts, not photos | Hard-reject PNG; only JPEG and WebP accepted from Wikimedia |
+| 3.4.2 | GitHub Actions secrets silent failure | All 9 cron editions cancelled or failed in 2s | `ESPRESSO_ADMIN_KEY` secret never set; GitHub passes empty string, not error | Set secrets in Actions settings; rewrite cron to use start-job + polling |
+| 3.4.2 | Cron max-time 120s too short | Curl timed out before pipeline finished | Pipeline takes 30–250s; curl `--max-time 120` killed it midway | Raised to 300s; switched to job polling (no HTTP timeout risk) |
+| 3.4.3 | Image container not full-bleed | Visible padding left/right of images | `max-w-2xl px-4` article constrained image to 672px | Negative margin breakout: `-mx-4 sm:-mx-8 lg:-mx-12` |
+| 3.4.4 | Cloudflare breaks app.cupof.news | App went offline after Cloudflare setup | All A records set to Proxied; Fly.io TLS breaks behind Cloudflare proxy | Set app.cupof.news to DNS Only (grey cloud); only root + www proxied |
 
 ---
 

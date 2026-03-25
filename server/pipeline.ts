@@ -1,7 +1,7 @@
 /**
  * @file server/pipeline.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.4.5
+ * @version 3.4.6
  *
  * Cup of News — Daily Digest Generation Pipeline
  *
@@ -437,7 +437,7 @@ async function fetchFromWikimediaMultiQuery(
     // Model: gemini-2.5-flash-preview (better contextual understanding than 2.0-flash)
     // Temperature: 0.1 (near-deterministic, consistent queries)
     //
-    // Prompt design principles (v3.4.5):
+    // Prompt design principles (v3.4.6):
     // - Prioritise CURRENT EVENT visuals (diplomatic meetings, protests, scenes)
     //   over ARCHIVAL/CEREMONIAL photos (award ceremonies, stock portraits)
     // - Named people must be paired with an action or context
@@ -531,57 +531,178 @@ Summary: "${summary.slice(0, 300)}"`;
 
     console.log(`  🔍 Wikimedia queries for "${title.slice(0, 50)}": ${queries.join(" | ")}`);
 
-    // ── Step 2: Try each query against Wikimedia Commons ───────────────────
-    // For each candidate, do a fast filename sanity check before accepting.
-    // The Wikimedia filename is a strong signal — it was set by the uploader
-    // and usually describes what is in the photo.
+    // ── Step 2: Try each query → vision relevance check ────────────────────
+    //
+    // For each query, find the best Wikimedia candidate by size/ratio scoring,
+    // then pass it through a vision model (gemini-2.0-flash-lite) to verify
+    // the image actually matches the story.
+    //
+    // WHY VISION CHECK:
+    //   Wikimedia's text search matches individual keywords, not semantic meaning.
+    //   "Meta" (company) → Minecraft (game) because "meta" appears in internal index.
+    //   "Hot" (paradox) → hot air balloon photo.
+    //   "Insetti" (Italian: insects) → museum wall poster diagram, not a news photo.
+    //   A vision model sees the actual image and rejects these in ~1.5s at negligible cost.
+    //
+    // THRESHOLD: score >= 5 on a 0-10 scale.
+    //   5 = tangentially related but clearly a real photo (acceptable)
+    //   4 = misleading or unrelated (reject → try next query)
+    //   0 = video game, diagram, map, illustration (immediately reject)
+    //
+    // FAIL-OPEN: If the vision API errors, we accept the image and log a warning.
+    //   A slightly wrong image is better than a picsum placeholder.
+    //   Vision errors should be rare (flash-lite is extremely reliable).
+    //
+    // COST: ~$0.001 per story (1 vision check at $0.075/M tokens, ~80 tokens each).
+    //   Negligible vs. the $0.07 Gemini 2.5 Pro digest generation cost.
     for (const query of queries) {
       const img = await wikimediaBestPhoto(query);
       if (!img) continue;
 
-      // Extract Wikimedia filename and do a quick relevance check
-      const filename = decodeURIComponent(img.split("/").pop() ?? "")
-        .replace(/^\d+px-/, "")
-        .replace(/[_-]/g, " ")
-        .toLowerCase();
+      const visionScore = await checkImageRelevanceWithVision(img, title, apiKey);
 
-      // Build a simple query-to-filename relevance check:
-      // At least 1 meaningful word from the query must appear in the filename.
-      // This catches cases where Wikimedia returns a completely unrelated image
-      // that happens to score well on size/ratio (e.g. military photo for music story).
-      const queryWords = query.toLowerCase()
-        .split(/\s+/)
-        .filter(w => w.length > 3); // skip short stop words
-
-      const filenameMatchScore = queryWords.filter(w => filename.includes(w)).length;
-      const filenameMatchRatio = queryWords.length > 0 ? filenameMatchScore / queryWords.length : 0;
-
-      // Accept if: any meaningful word from query appears in filename (ratio ≥ 0.2)
-      // OR filename is very short (< 20 chars, uploaded files often have clean names)
-      if (filenameMatchRatio >= 0.2 || filename.length < 20) {
-        console.log(`  ✅ Found image (score ${filenameMatchRatio.toFixed(2)}) for query: "${query}"`);
-        console.log(`     filename: ${filename.slice(0, 80)}`);
+      if (visionScore >= 5) {
+        console.log(`  ✅ Vision check passed (score ${visionScore}/10) for: "${query}"`);
         return img;
       } else {
-        console.log(`  ⚠️  Skipping (score ${filenameMatchRatio.toFixed(2)}, no match): "${query}" vs "${filename.slice(0, 60)}"`);
-        // Don't return — try next query
+        console.log(`  🚫 Vision check failed (score ${visionScore}/10) — skipping: "${query}"`);
+        // Try next query
       }
     }
 
-    // If no query passed the filename check, return the best candidate anyway
-    // (better than picsum fallback). This prevents over-rejection.
-    for (const query of queries) {
-      const img = await wikimediaBestPhoto(query);
-      if (img) {
-        console.log(`  ✅ Found image (fallback, no filename match): "${query}"`);
-        return img;
-      }
-    }
+    // All 5 queries failed vision check — fall through to picsum.
+    // This is the correct outcome: no misleading image is better than Minecraft.
+    console.log(`  ⚠️  All queries failed vision check for: "${title.slice(0, 50)}"`);
     return null;
 
   } catch (err) {
     console.warn(`  ⚠️  fetchFromWikimediaMultiQuery error: ${err}`);
     return null;
+  }
+}
+
+/**
+ * checkImageRelevanceWithVision — pass a Wikimedia image URL to a vision model
+ * and get a 0–10 relevance score for the given story headline.
+ *
+ * Model: google/gemini-2.0-flash-lite-001
+ *   Cost: ~$0.075/M tokens. Each check is ~80 input tokens + ~30 output tokens.
+ *   Cost per check: ~$0.000008. Cost per digest (up to 20 checks): ~$0.00016.
+ *   Entirely negligible vs. the $0.07 Gemini 2.5 Pro digest cost.
+ *
+ * We use "detail: low" for the image — Gemini downscales to 512px.
+ * Sufficient to identify whether it's a video game, museum diagram, or real news photo.
+ * Latency: ~1.2–1.8s per check.
+ *
+ * Scoring:
+ *   0   = video game screenshot, museum wall diagram, map, illustration, logo
+ *   1-4 = real photo but completely unrelated to the story
+ *   5-6 = tangentially related (same country, same general topic)
+ *   7-9 = clearly relevant editorial photo
+ *   10  = perfect (shows the exact event, person, or place in the headline)
+ *
+ * Accept threshold: score >= 5 (tangentially related real photo is OK).
+ * Fail-open: if the API errors or returns unparseable JSON, return 7 (accept).
+ *   A slightly wrong image is better than a picsum placeholder.
+ *
+ * @param imageUrl  - Wikimedia 1280px thumb URL
+ * @param storyTitle - The story headline (used to judge relevance)
+ * @param apiKey    - OpenRouter API key
+ * @returns score 0–10
+ */
+async function checkImageRelevanceWithVision(
+  imageUrl: string,
+  storyTitle: string,
+  apiKey: string
+): Promise<number> {
+  const VISION_PROMPT = `You are a photo editor at a news organisation. Evaluate this image for use as a news photo.
+
+Story headline: "${storyTitle.slice(0, 100)}"
+
+GATE 1 — Is this a real editorial photograph?
+Score 0 immediately and reject if ANY of these:
+- Video game screenshot or CGI render
+- Museum exhibit, educational wall poster, or anatomical diagram
+- Infographic, data chart, map, or illustration
+- Historical painting or drawing
+- Logo, icon, or graphic design
+
+GATE 2 — Is it relevant to the headline? (only if Gate 1 passed)
+Score 7-10: clearly shows the event, people, place, or objects in the headline
+Score 5-6: tangentially related — same country, same general topic, real photo
+Score 0-4: misleading or unrelated even if it's a real photo
+
+Be strict. When in doubt, score low.
+
+Return ONLY valid JSON, no markdown:
+{"is_photo": true/false, "score": 0-10, "verdict": "accept" or "reject"}`;
+
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://cupof.news",
+        "X-Title": "Cup of News",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.0-flash-lite-001",
+        messages: [{
+          role: "user",
+          content: [
+            {
+              type: "image_url",
+              image_url: {
+                url: imageUrl,
+                detail: "low",  // 512px resolution — sufficient, fast, cheap
+              },
+            },
+            { type: "text", text: VISION_PROMPT },
+          ],
+        }],
+        max_tokens: 60,
+        temperature: 0,  // deterministic — same image always gets same score
+      }),
+      signal: AbortSignal.timeout(8_000),  // 8s max — vision is fast
+    });
+
+    if (!res.ok) {
+      // API error — fail open, accept the image
+      console.warn(`  ⚠️  Vision check API error ${res.status} — accepting image`);
+      return 7;
+    }
+
+    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+    const raw = (data.choices?.[0]?.message?.content ?? "").trim()
+      .replace(/^```json\s*/m, "").replace(/```$/m, "").trim();
+
+    // Find the JSON object — handle any surrounding text
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}") + 1;
+    if (start < 0 || end <= start) {
+      console.warn(`  ⚠️  Vision check unparseable response — accepting image`);
+      return 7;
+    }
+
+    const result = JSON.parse(raw.slice(start, end)) as {
+      is_photo?: boolean;
+      score?: number;
+      verdict?: string;
+    };
+
+    const score = typeof result.score === "number" ? result.score : 7;
+    const isPhoto = result.is_photo !== false;  // default true if missing
+
+    // If the model determined it's not a real photo at all, score it 0
+    if (!isPhoto) return 0;
+
+    return score;
+
+  } catch (err) {
+    // Network error, timeout — fail open
+    console.warn(`  ⚠️  Vision check exception — accepting image: ${err}`);
+    return 7;
   }
 }
 
@@ -641,7 +762,7 @@ Context: "${summary.slice(0, 150)}"`;
 /**
  * wikimediaBestPhoto — search Wikimedia Commons, return best landscape photo.
  *
- * v3.4.5 improvements:
+ * v3.4.6 improvements:
  * - Extended BAD filter: rejects award ceremonies, official portraits, stamps,
  *   coat-of-arms, historical/archival patterns by filename
  * - Uses Wikimedia thumb API to return a 1280px-wide resized URL instead of

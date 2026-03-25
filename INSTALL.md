@@ -81,7 +81,7 @@ openssl rand -hex 32
 
 1. Create a free account at [openrouter.ai](https://openrouter.ai)
 2. **Keys → Create Key** → name it `cup-of-news`
-3. Add ~$10 credit (lasts months at ~$0.08-0.15/digest with Gemini 2.5 Pro; or ~$5 if you switch to `gemini-2.0-flash`)
+3. Add ~$10 credit (lasts months at ~$0.07/digest with Gemini 2.5 Pro; or ~$5 if you switch to `gemini-2.0-flash`)
 
 **Default model:** `google/gemini-2.5-pro`
 
@@ -509,7 +509,7 @@ const DEFAULT_MODEL = "google/gemini-2.5-pro";
 
 | Model | Cost/digest | Quality | Speed |
 |-------|-------------|---------|-------|
-| `google/gemini-2.5-pro` | ~$0.08-0.15 | Best (diversity rules) | Medium |
+| `google/gemini-2.5-pro` | ~$0.07 | Best (diversity rules) | Medium |
 | `google/gemini-2.0-flash-001` | ~$0.02 | Good | Fast |
 | `anthropic/claude-3-haiku` | ~$0.05 | Great | Fast |
 | `openai/gpt-4o-mini` | ~$0.04 | Great | Fast |

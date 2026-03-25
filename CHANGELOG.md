@@ -1,3 +1,51 @@
+## [3.2.4] — 2026-03-25
+
+**Digest cost corrected. All 9 language translations proofread and updated.**
+
+### Cost correction: ~$0.15 → ~$0.07 per digest
+
+The cost stat and feat8 block across the landing page showed ~$0.15 per digest —
+carried over from an early estimate before Gemini 2.5 Pro pricing was confirmed.
+
+Real cost at current OpenRouter rates for Gemini 2.5 Pro:
+- Input:  ~17,000 tokens × $1.25/M = $0.021
+- Output: ~4,500  tokens × $10/M  = $0.045
+- Total:  ~$0.07 per digest
+
+Updated everywhere: stat bar (`~$0.07`), feat8 card title, feat8 card body,
+all 9 TRANSLATIONS objects, README features table, README stack table,
+README architecture diagram, INSTALL.md model comparison table,
+server/index.ts startup auto-generate cost comment.
+
+### Tagline correction
+
+Old: "A year of daily digests costs less than a single coffee."
+Math check: $0.07 × 365 × 2 = $51/year (twice daily, one edition).
+That is not "less than a coffee." A Starbucks latte at $6.50 ≠ $51.
+
+New (accurate): "A Starbucks latte buys you three months of daily digests."
+Math: $6.50 ÷ $0.07 = 93 digests ÷ 1/day = 3 months. Honest and still punchy.
+
+### Translations — all 9 languages proofread natively
+
+Each language version of feat8_text was rewritten with correct cost and a
+native-register Starbucks comparison:
+- EN: "a Starbucks latte buys you three months of daily digests"
+- FR: "un latte Starbucks vous offre trois mois de revues de presse quotidiennes"
+- DE: "ein Starbucks-Latte reicht für drei Monate tägliche Nachrichtenzusammenfassungen"
+- ES: "un café de Starbucks te da para tres meses de resúmenes diarios"
+- PT: "um café no Starbucks paga três meses de digests diários"
+- ZH: "一杯星巴克拿铁够支撑三个月的每日摘要"
+- RU: "один латте в Starbucks покрывает три месяца ежедневных дайджестов"
+- TR: "bir Starbucks latte üç aylık günlük özetleri karşılıyor"
+- IT: "un caffè da Starbucks ti copre tre mesi di digest quotidiani"
+
+Italian note: "un caffè" in Italian normally means espresso at a bar (€1).
+We kept "Starbucks" explicitly to avoid the ambiguity — a bar espresso at €1
+would make the comparison feel *too* cheap rather than accurate.
+
+---
+
 ## [3.2.3] — 2026-03-25
 
 **Russian flag corrected. Landing page language selector rebuilt as custom dropdown.**

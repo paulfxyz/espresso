@@ -1,7 +1,7 @@
 /**
  * @file server/index.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.2.3
+ * @version 3.2.4
  *
  * Cup of News — Express Server Entry Point
  *
@@ -146,7 +146,7 @@ app.use((req, res, next) => {
  * COUNTER-ARGUMENT / AUDIT:
  *   One could argue this burns API credits on startup. Counter: it only generates
  *   if there are literally zero digests for an edition. After the first run, it
- *   finds existing digests and does nothing. Cost: 8 x ~$0.10 = ~$0.80 on first deploy.
+ *   finds existing digests and does nothing. Cost: 9 × ~$0.07 = ~$0.63 on first deploy.
  *   Subsequent restarts: $0. Worth it to ensure the reader is never empty.
  */
 async function ensureAllEditionsHaveDigest() {

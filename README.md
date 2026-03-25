@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-3.2.3-red?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-3.2.4-red?style=for-the-badge)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
 ![Node.js](https://img.shields.io/badge/Node.js-20+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
@@ -51,7 +51,7 @@ This project was designed and built entirely in collaboration with **[Perplexity
 | **PWA-ready** | Installable from browser on iOS/Android |
 | **Capacitor-ready** | Native iOS/Android app with one command (`npx cap sync`) |
 | **Economist design** | Red/black/white, Cabinet Grotesk + Libre Baskerville |
-| **One paid service** | OpenRouter only — ~$0.15/digest at Gemini 2.5 Pro rates |
+| **One paid service** | OpenRouter only — ~$0.07/digest at Gemini 2.5 Pro rates |
 
 ---
 
@@ -85,7 +85,7 @@ You submit links all week (API, admin panel, Safari Share Sheet)
                               │
                               ▼
                OpenRouter — 1 structured API call
-               Model: Gemini 2.5 Pro (~$0.08-0.15/digest)
+               Model: Gemini 2.5 Pro (~$0.07/digest)
                Output: 20 stories ranked + summarised
                        + mandatory coverage enforced
                        + closing quote
@@ -200,7 +200,7 @@ One real deployment frustration: Fly auto-generates a random app name during set
 
 ## 🌍 Language Editions
 
-As of v3.2.3, Cup of News generates natively in **9 languages**. Each edition has its own RSS source set, its own system prompt language, and its own editorial identity. The principle: 1 edition = 1 language.
+As of v3.2.4, Cup of News generates natively in **9 languages**. Each edition has its own RSS source set, its own system prompt language, and its own editorial identity. The principle: 1 edition = 1 language.
 
 | Edition | Language | Flag | Key Sources | Notes |
 |---------|----------|------|-------------|-------|
@@ -506,7 +506,7 @@ cup-of-news/
 | Runtime | Node.js 20 + Express | Runs anywhere, minimal abstraction, easy to reason about |
 | Frontend | React 18 + Vite + Tailwind + shadcn/ui | Fast builds, tree-shakeable, excellent DX |
 | Database | SQLite (Drizzle ORM) | Zero infrastructure, single file, trivial backup |
-| AI | OpenRouter (Gemini 2.5 Pro) | 400+ models, one API key, ~$0.08-0.15/digest |
+| AI | OpenRouter (Gemini 2.5 Pro) | 400+ models, one API key, ~$0.07/digest |
 | Content extraction | Jina Reader (free) | Handles paywalls, YouTube, TikTok — no key needed |
 | Image extraction | OG metadata → HTML fallback → editorial SVG | 3-tier: always gets something good |
 | RSS fallback | 34 public feeds | Transparent, inspectable, zero cost |
@@ -523,6 +523,7 @@ Full history with engineering narrative: **[CHANGELOG.md](./CHANGELOG.md)**
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **3.2.4** | 2026-03-25 | Cost corrected (~$0.07/digest, real Gemini 2.5 Pro rate), tagline updated, all 9 language translations proofread |
 | **3.2.3** | 2026-03-25 | Russian flag fix (🌍 → 🇷🇺), landing page custom language dropdown matching app design |
 | **3.2.2** | 2026-03-25 | Modal click-outside close, card slide animation, triple-click generate. Twice-daily cron (6 AM + 4 PM GMT). FTP + Fly.io deploy automation |
 | **3.2.0** | 2026-03-25 | Turkish + Italian editions (9 languages total), logo hard-refresh (1250ms spinner + window.location.reload()), landing page full rewrite |
@@ -547,7 +548,7 @@ Full history with engineering narrative: **[CHANGELOG.md](./CHANGELOG.md)**
 
 ## 🗺️ Roadmap
 
-**v3.2.3 shipped.** 9 native language editions (EN/FR/DE/ES/PT/ZH/RU/TR/IT), logo hard-refresh UX, complete landing page rewrite removing all legacy edition references.
+**v3.2.4 shipped.** 9 native language editions (EN/FR/DE/ES/PT/ZH/RU/TR/IT), logo hard-refresh UX, complete landing page rewrite removing all legacy edition references.
 
 ### v3.2 — Delivery & Channels
 - 📧 Email delivery (Postmark / Resend) — digest in your inbox at 6 AM

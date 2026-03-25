@@ -1,7 +1,7 @@
 /**
  * @file server/index.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.4.1
+ * @version 3.4.2
  *
  * Cup of News — Express Server Entry Point
  *

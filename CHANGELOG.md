@@ -1,3 +1,98 @@
+## [3.4.2] — 2026-03-25
+
+**OG image dimension validation. Reject portrait images by header byte inspection.**
+
+### The problem in v3.4.1
+
+`isValidOgImage()` rejected portrait images based on URL patterns: `vertical`, `portrait`,
+`2by3`, `9x16`, etc. This worked for NYT (which explicitly encodes the crop in the URL) but
+missed two classes of bad images:
+
+1. **Portrait OG images with neutral CDN URLs** — Reuters, AP, AFP CDNs serve portrait
+   crops at generic URLs like `s1.reutersmedia.net/resources/r/?m=02&d=...` — no portrait
+   hint in the URL. Ratio might be 0.75 or 0.85. These slip through URL validation and
+   appear as cropped face-shots in the digest.
+
+2. **Narrow landscape images** — some publishers set `og:image` to a 300×200 thumbnail.
+   These are technically landscape but too small for the card, so Wikimedia gives better results.
+
+### The fix: actual dimension check via header bytes
+
+New async function `getImageDimensions(url)` fetches only the first 1KB of the image
+using HTTP `Range: bytes=0-1023` and parses dimension headers:
+
+- **JPEG:** Scans for SOF markers (0xFF 0xC0–0xCF), reads height+width fields
+- **PNG:** Reads IHDR chunk at bytes 16–23
+- **WebP:** Reads VP8 chunk at bytes 26–29
+
+This is called after URL validation succeeds, adding ~200ms per OG image but only
+needing to fire when the URL check passed.
+
+**Rejection thresholds:**
+- `ratio < 1.3` → portrait or near-square → use Wikimedia instead
+- `width < 400px` → too small → use Wikimedia instead
+
+**Fail-open design:** If the CDN returns 403 on Range requests (Reuters, some paywalled
+outlets do this), `getImageDimensions()` returns `null` and we trust the URL validator.
+False positives (accepting a portrait) are better than false negatives (rejecting a
+real landscape image).
+
+Console log added: `🚫 OG rejected by dims: 600x800 (ratio 0.75) — https://...`
+so every rejection is visible in server logs for debugging.
+
+### Wikimedia improvements (also v3.4.2)
+
+- Minimum aspect ratio raised from 1.2 → 1.4 (stricter landscape requirement)
+- 16:9 proximity scoring weight: ratioScore×0.5 + sizeScore×0.3 + sizeBonus×0.2
+- Size bonus threshold: images ≥ 1200px wide get 0.2 bonus score (was no bonus)
+
+### Version bumps
+
+All @version headers, package.json, health endpoint, landing/index.html (25 occurrences),
+README badge all bumped to 3.4.2.
+
+---
+
+## [3.4.1] — 2026-03-25
+
+**object-cover → object-contain. No more image cropping.**
+
+### The problem in v3.4.0
+
+Images were displayed with `object-cover` inside a fixed-height card container.
+`object-cover` fills the container by cropping the edges — fine for portrait photos used
+as backgrounds, wrong for editorial news photos where cropping removes the subject.
+
+Result: Mohamed Salah photo was zoomed in to just a crowd of fans. Wide landscape
+Wikimedia photos were cropped to a narrow vertical slice. The pipeline was finding
+*the right images* but displaying them wrong.
+
+### The fix
+
+All story card images changed from:
+```tsx
+<img className="w-full h-full object-cover" />
+```
+to:
+```tsx
+<img className="w-full h-full object-contain bg-black" />
+```
+
+Card height container changed from `h-48` (fixed, caused crop) to `aspect-video`
+(16:9 ratio, natural for news images). `bg-black` fills letterbox bars for non-16:9 images.
+
+This means: whatever the Wikimedia pipeline returns is shown in full, no cropping.
+A 16:9 image fills the card perfectly. A 4:3 image gets subtle black bars on the sides.
+Both are better than an aggressively cropped 16:9 portrait.
+
+### Why not crop to 16:9 server-side
+
+Server-side crop requires sharp/jimp, adds 50–200ms per image, and can still get the
+focal point wrong (subject in bottom-right corner → crops to black sky). The correct
+fix is better image selection (v3.4.0) + no-crop display (v3.4.1).
+
+---
+
 ## [3.4.0] — 2026-03-25
 
 **AI 5-query image pipeline. Semantically accurate photos for every story.**

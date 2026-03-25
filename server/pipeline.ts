@@ -1,7 +1,7 @@
 /**
  * @file server/pipeline.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.4.1
+ * @version 3.4.2
  *
  * Cup of News — Daily Digest Generation Pipeline
  *
@@ -150,12 +150,77 @@ function isValidOgImage(url: string | null): boolean {
   const lower = url.toLowerCase();
   if (logoPatterns.some(p => lower.includes(p))) return false;
 
+  // Reject portrait-format URL patterns — these are explicitly cropped tall
+  // e.g. NYT "verticalTwoByThree735", "portrait", "2by3", "tall", "9x16"
+  const portraitPatterns = [
+    "vertical", "portrait", "2by3", "2-by-3", "9x16", "9by16",
+    "9-by-16", "tallimage", "tall-image", "_tall", "-tall",
+  ];
+  if (portraitPatterns.some(p => lower.includes(p))) return false;
+
   // Must look like an image path
   const imageExts = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"];
   const hasImageExt = imageExts.some(e => lower.includes(e));
   const hasImageCDN = ["cdn.", "images.", "img.", "media.", "static.", "photo", "thumb", "upload", "cpsprod", "i.guim", "i.imgur", "twimg"].some(h => lower.includes(h));
 
   return hasImageExt || hasImageCDN;
+}
+
+/**
+ * Check actual image dimensions by fetching just the image headers.
+ * Returns {w, h} if detectable, null otherwise.
+ * Used to reject portrait OG images that pass URL pattern checks.
+ * We fetch only enough bytes to read JPEG/PNG dimension headers (first 24 bytes).
+ */
+async function getImageDimensions(url: string): Promise<{ w: number; h: number } | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { "Range": "bytes=0-1023", "User-Agent": "CupOfNews/3.4" },
+      signal: AbortSignal.timeout(4_000),
+    });
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+
+    // JPEG: FF D8 — dimensions at various offsets, parse SOF marker
+    if (bytes[0] === 0xFF && bytes[1] === 0xD8) {
+      let i = 2;
+      while (i < bytes.length - 8) {
+        if (bytes[i] === 0xFF) {
+          const marker = bytes[i + 1];
+          // SOF markers: C0-C3, C5-C7, C9-CB, CD-CF
+          if ((marker >= 0xC0 && marker <= 0xCF) && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC) {
+            const h = (bytes[i + 5] << 8) | bytes[i + 6];
+            const w = (bytes[i + 7] << 8) | bytes[i + 8];
+            if (w > 0 && h > 0) return { w, h };
+          }
+          const len = (bytes[i + 2] << 8) | bytes[i + 3];
+          i += 2 + len;
+        } else { i++; }
+      }
+    }
+
+    // PNG: 89 50 4E 47 — dimensions at bytes 16-23
+    if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes.length >= 24) {
+      const w = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+      const h = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+      if (w > 0 && h > 0) return { w, h };
+    }
+
+    // WebP: RIFF....WEBP VP8
+    if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes.length >= 30) {
+      // VP8 chunk: width at bytes 26-27 (14-bit), height at 28-29 (14-bit)
+      if (bytes[12] === 0x56 && bytes[13] === 0x50 && bytes[14] === 0x38) {
+        const w = ((bytes[26] | (bytes[27] << 8)) & 0x3FFF) + 1;
+        const h = ((bytes[28] | (bytes[29] << 8)) & 0x3FFF) + 1;
+        if (w > 0 && h > 0) return { w, h };
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -473,15 +538,19 @@ async function wikimediaBestPhoto(query: string): Promise<string | null> {
       const w = info.width ?? 0, h = info.height ?? 0;
       if (w < 640 || h < 360) continue;
       const ratio = w / Math.max(h, 1);
-      if (ratio < 1.2 || ratio > 3.5) continue; // landscape only
+      if (ratio < 1.4 || ratio > 3.2) continue; // landscape ≥1.4 required
       if (info.url.includes(".svg")) continue;
       if (BAD.some(b => info.url.includes(b))) continue;
       if (!isValidOgImage(info.url)) continue;
 
-      // Score: prefer 16:9 and larger images
-      const ratioScore = 1 - Math.abs(ratio - 1.778) / 2;
-      const sizeScore = Math.min(w * h, 4_000_000) / 4_000_000;
-      candidates.push({ score: ratioScore * 0.4 + sizeScore * 0.6, url: info.url });
+      // Score: strongly prefer 16:9, penalise anything too square
+      // Ratio must be at least 1.4 to avoid near-square images
+      if (ratio < 1.4) continue;
+      const ratioScore = Math.max(0, 1 - Math.abs(ratio - 1.778) * 1.5);
+      const sizeScore  = Math.min(w * h, 8_000_000) / 8_000_000;
+      // Prefer at least 1200px wide for editorial quality
+      const sizeBonus  = w >= 1200 ? 0.2 : 0;
+      candidates.push({ score: ratioScore * 0.5 + sizeScore * 0.3 + sizeBonus * 0.2, url: info.url });
     }
 
     if (!candidates.length) return null;
@@ -1235,7 +1304,25 @@ IMPORTANT: For additionalIdxs — if multiple articles in the list cover the SAM
       }
 
       // Image: use OG only if it passes validation, otherwise mark for generation
-      const ogValid = isValidOgImage(original.ogImage || null);
+      // Phase 1: URL pattern check (fast, synchronous)
+      let ogValid = isValidOgImage(original.ogImage || null);
+
+      // Phase 2: Actual dimension check — reject portrait images that slipped through URL pattern
+      // e.g. NYT images that are landscape URLs but render tall (close-cropped people shots)
+      // We only fetch headers (first 1KB) — negligible latency, high signal
+      if (ogValid && original.ogImage) {
+        const dims = await getImageDimensions(original.ogImage);
+        if (dims) {
+          const ratio = dims.w / dims.h;
+          // Reject if: portrait (ratio < 1.3) OR too small (w < 400px)
+          // 1.3 minimum gives some tolerance for near-square (e.g. 1.33 = 4:3)
+          if (ratio < 1.3 || dims.w < 400) {
+            console.log(`  🚫 OG rejected by dims: ${dims.w}x${dims.h} (ratio ${ratio.toFixed(2)}) — ${original.ogImage?.substring(0, 80)}`);
+            ogValid = false;
+          }
+        }
+      }
+
       const imageUrl = ogValid
         ? original.ogImage!
         : `__GENERATE__:${s.title}:${s.category}`;

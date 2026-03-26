@@ -1,7 +1,7 @@
 /**
  * @file server/pipeline.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.5.4
+ * @version 3.5.5
  *
  * Cup of News — Daily Digest Generation Pipeline
  *
@@ -441,9 +441,9 @@ async function fetchEditorialImage(
             console.log(`  📰 OG re-fetch: rehosted (vision ${ogScore}/10) from ${sourceUrl.slice(0, 60)}`);
             return hostedOg;
           }
-          // Could not rehost (sharp error, network) — serve the original OG URL directly
-          console.log(`  📰 OG re-fetch: using original URL (rehost failed)`);
-          return freshOg;
+          // rehostImage rejected the image (quality gate) — fall through to Wikimedia
+          console.log(`  📰 OG re-fetch: rehostImage rejected (low quality) — falling through to Wikimedia`);
+          // Do NOT return freshOg — continue to Tier 3
         } else {
           console.log(`  🚫 OG vision check failed (score ${ogScore}/10) — falling through to Wikimedia`);
         }
@@ -455,9 +455,10 @@ async function fetchEditorialImage(
   if (apiKey) {
     const wikiPhoto = await fetchFromWikimediaMultiQuery(title, summary, apiKey, sourceTitleHint);
     if (wikiPhoto) {
-      // Rehost Wikimedia image as WebP on our server
       const hosted = await rehostImage(wikiPhoto);
-      return hosted ?? wikiPhoto;  // fallback to original if rehost fails
+      if (hosted) return hosted;
+      console.log(`  ⚠️  Wikimedia rehostImage failed — falling through to Unsplash/SVG`);
+      // Do NOT return wikiPhoto raw — quality gate may have rejected it
     }
   }
 
@@ -467,7 +468,8 @@ async function fetchEditorialImage(
     const unsplashResult = await fetchFromUnsplash(title, unsplashKey, category);
     if (unsplashResult) {
       const hosted = await rehostImage(unsplashResult);
-      return hosted ?? unsplashResult;
+      if (hosted) return hosted;
+      // If rehostImage fails for Unsplash, fall through to SVG
     }
   }
 

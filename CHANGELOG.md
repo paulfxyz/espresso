@@ -1,3 +1,11 @@
+## [3.5.5] - 2026-03-26
+
+### Fixed
+- **No more raw external URLs**: `fetchEditorialImage` no longer returns the raw OG/Wikimedia/Unsplash
+  URL when `rehostImage` rejects it — always falls through to next tier or SVG fallback
+- Tier 2.5, 3, and 4 all now strictly require a successful rehost before returning
+- Version strings bumped to 3.5.5
+
 ## [3.5.4] - 2026-03-26
 
 ### Fixed

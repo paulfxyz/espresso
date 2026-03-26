@@ -1,7 +1,7 @@
 /**
  * @file server/pipeline.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.5.6
+ * @version 3.5.7
  *
  * Cup of News — Daily Digest Generation Pipeline
  *
@@ -2085,10 +2085,10 @@ export async function reprocessDigestImages(
     }
   }
 
-  // Skip SVG data URIs — these are correct by design
+  // For SVG placeholders: try to replace with a real or AI-generated image
   if (story.imageUrl.startsWith("data:image/svg")) {
-    console.log(`  ⏭️  SVG placeholder: "${title.slice(0, 40)}"`);
-    return story.imageUrl;
+    console.log(`  🔄 SVG placeholder — attempting AI/editorial replacement: "${title.slice(0, 40)}"`);
+    // Fall through to fetchEditorialImage below
   }
 
   // Try to rehost if it's an existing external URL (not picsum, not placeholder)

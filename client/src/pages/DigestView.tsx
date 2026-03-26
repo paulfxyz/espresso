@@ -1,7 +1,7 @@
 /**
  * @file client/src/pages/DigestView.tsx
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.5.6
+ * @version 3.5.7
  *
  * Cup of News — Public Digest Reader
  *

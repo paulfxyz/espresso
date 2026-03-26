@@ -1,3 +1,10 @@
+## [3.5.7] - 2026-03-26
+
+### Fixed
+- **SVG placeholders now get AI image replacement**: `reprocessDigestImages` no longer
+  skips `data:image/svg` stories — they now run through the full pipeline including
+  AI generation (Tier 4.5), replacing text placeholders with real photorealistic images
+
 ## [3.5.6] - 2026-03-26
 
 ### Added

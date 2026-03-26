@@ -1,3 +1,31 @@
+## [3.5.2] — 2026-03-26
+
+**No more press outlet branding on images. Vision check now covers OG images too.**
+
+### Problem
+OG images fetched from outlets like The Guardian, The Times, and South China Morning Post
+bake their masthead logo directly into the og:image (e.g. Guardian injects a
+`overlay-base64` parameter into the image URL). These were being rehosted as-is,
+making Cup of News images look like Guardian/SCMP thumbnails with visible branding.
+
+### Fixes (v3.5.2)
+
+**1. Vision check now applies to OG images (Tier 1 + Tier 2.5)**
+Previously, the vision check only ran on Wikimedia images. Now it runs on every OG image
+before it gets accepted. Any image with a visible media outlet logo, watermark, chyron,
+or text overlay is rejected (score 0, Gate 1 hard reject), and the pipeline falls
+through to Wikimedia.
+
+**2. Vision prompt: branded overlay is now Gate 1 rejection #1**
+Added explicit rule: "Visible media outlet logo, watermark, chyron, or text overlay
+(BBC, Guardian, Reuters, AP, AFP, CNN, NYT, SCMP, Times, etc.) — even if the
+underlying photo is relevant."
+
+**3. URL-pattern blocking for overlay-injected OG images**
+`isValidOgImage` now rejects URLs containing overlay injection parameters
+(`overlay-base64=`, `overlay-align=`, `overlay-width=`) — Guardian's URL-based
+logo injection is caught at the URL level before any fetch happens.
+
 ## [3.5.1] — 2026-03-25
 
 **Better image cropping. Stricter vision check. No more center-crop cutting heads off.**

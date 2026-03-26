@@ -1,7 +1,7 @@
 /**
  * @file server/pipeline.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.5.1
+ * @version 3.5.2
  *
  * Cup of News — Daily Digest Generation Pipeline
  *
@@ -150,6 +150,15 @@ function isValidOgImage(url: string | null): boolean {
   ];
   const lower = url.toLowerCase();
   if (logoPatterns.some(p => lower.includes(p))) return false;
+
+  // Reject OG images with known branding overlay URL parameters
+  const overlayParams = [
+    "overlay-base64=",    // Guardian/Guim overlay injection
+    "overlay-align=",     // Guardian overlay positioning
+    "overlay-width=",     // Guardian overlay sizing
+    "watermark=",         // generic watermark param
+  ];
+  if (overlayParams.some(p => lower.includes(p))) return false;
 
   // Reject portrait-format URL patterns — these are explicitly cropped tall
   // e.g. NYT "verticalTwoByThree735", "portrait", "2by3", "tall", "9x16"
@@ -407,16 +416,20 @@ async function fetchEditorialImage(
   if (sourceUrl) {
     const freshOg = await fetchOgImageDirect(sourceUrl);
     if (freshOg && isValidOgImage(freshOg)) {
-      // Vision-check the OG image — it's from the correct article, so threshold is lower
-      // We trust OG images from reputable news outlets more than random Wikimedia results
-      const hostedOg = await rehostImage(freshOg);
-      if (hostedOg) {
-        console.log(`  📰 OG re-fetch: rehosted from ${sourceUrl.slice(0, 60)}`);
-        return hostedOg;
+      // Vision-check the OG image — rejects branded overlays, logos, watermarks
+      const ogScore = apiKey ? await checkImageRelevanceWithVision(freshOg, title, apiKey) : 7;
+      if (ogScore >= 7) {
+        const hostedOg = await rehostImage(freshOg);
+        if (hostedOg) {
+          console.log(`  📰 OG re-fetch: rehosted (vision ${ogScore}/10) from ${sourceUrl.slice(0, 60)}`);
+          return hostedOg;
+        }
+        // Could not rehost (sharp error, network) — serve the original OG URL directly
+        console.log(`  📰 OG re-fetch: using original URL (rehost failed)`);
+        return freshOg;
+      } else {
+        console.log(`  🚫 OG vision check failed (score ${ogScore}/10) — falling through to Wikimedia`);
       }
-      // Could not rehost (sharp error, network) — serve the original OG URL directly
-      console.log(`  📰 OG re-fetch: using original URL (rehost failed)`);
-      return freshOg;
     }
   }
 
@@ -614,6 +627,7 @@ async function checkImageRelevanceWithVision(
 Story headline: "${storyTitle.slice(0, 100)}"
 
 GATE 1 — HARD REJECT (score 0) if ANY of these:
+- Visible media outlet logo, watermark, chyron, or text overlay (BBC, Guardian, Reuters, AP, AFP, CNN, NYT, SCMP, Times, etc.) — even if the underlying photo is relevant
 - Video game screenshot, CGI, or 3D render
 - Museum exhibit, educational diagram, or anatomical chart
 - Infographic, data chart, map, or illustration
@@ -1735,6 +1749,15 @@ IMPORTANT: For additionalIdxs — if multiple articles in the list cover the SAM
               console.log(`  🚫 OG rejected by dims: ${dims.w}x${dims.h} (ratio ${ratio.toFixed(2)}) — ${original.ogImage?.substring(0, 80)}`);
               ogValid = false;
             }
+          }
+        }
+
+        // Phase 3: Vision check — reject branded overlays, logos, watermarks
+        if (ogValid && original.ogImage) {
+          const ogVisionScore = await checkImageRelevanceWithVision(original.ogImage, s.title, apiKey);
+          if (ogVisionScore < 7) {
+            console.log(`  🚫 OG vision check failed (score ${ogVisionScore}/10) — ${original.ogImage?.substring(0, 80)}`);
+            ogValid = false;
           }
         }
 

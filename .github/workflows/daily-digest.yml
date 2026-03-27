@@ -1,7 +1,7 @@
 ##
 ## .github/workflows/daily-digest.yml
 ## @author Paul Fleury <hello@paulfleury.com>
-## @version 3.4.2
+## @version 3.5.9
 ##
 ## Cup of News — Digest Generation for ALL 9 Language Editions
 ##
@@ -11,7 +11,7 @@
 ##   Each edition uses its own native-language RSS source pool and writes in
 ##   the target language via Gemini 2.5 Pro.
 ##
-## HOW IT WORKS (v3.4.2+):
+## HOW IT WORKS (v3.5.9+):
 ##   Uses the two-step job API to avoid HTTP proxy timeouts:
 ##
 ##   Step 1 — POST /api/digest/start-job { pin, edition }

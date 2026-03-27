@@ -1,0 +1,39 @@
+##
+## .github/workflows/deploy-landing.yml
+##
+## Deploy Landing to Siteground — auto-deploys landing/index.html via SFTP
+##
+## REQUIRED SECRETS (Settings → Secrets → Actions):
+##   SITEGROUND_SFTP_HOST      — Siteground SFTP hostname
+##   SITEGROUND_SFTP_USER      — Siteground SFTP username
+##   SITEGROUND_SFTP_PASSWORD  — Siteground SFTP password
+##   SITEGROUND_SFTP_PORT      — (optional) SFTP port, default 18765
+##
+
+name: Deploy Landing to Siteground
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'landing/index.html'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Upload to Siteground via SFTP
+        uses: wlixcc/SFTP-Deploy-Action@v1.2.4
+        with:
+          server: ${{ secrets.SITEGROUND_SFTP_HOST }}
+          username: ${{ secrets.SITEGROUND_SFTP_USER }}
+          password: ${{ secrets.SITEGROUND_SFTP_PASSWORD }}
+          port: ${{ secrets.SITEGROUND_SFTP_PORT || 18765 }}
+          local_path: './landing/index.html'
+          remote_path: '/home/${{ secrets.SITEGROUND_SFTP_USER }}/www/cupof.news/public_html/'

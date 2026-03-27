@@ -1,3 +1,13 @@
+## [3.5.9] - 2026-03-26
+
+### Added
+- **Reprocess queue**: POST /api/digest/:id/reprocess-images now returns immediately with
+  `{ queued: true }` and processes in the background — no more HTTP timeouts
+- **Rate limiting**: Max 2 digest reprocesses per hour to prevent OOM and API overuse
+- **Concurrency protection**: Only one digest reprocesses at a time (sequential queue)
+- **No overlap**: Duplicate digest requests detected and deduplicated
+- **Status endpoint**: GET /api/reprocess/status shows running job, queue, and rate limit state
+
 ## [3.5.8] - 2026-03-26
 
 ### Fixed

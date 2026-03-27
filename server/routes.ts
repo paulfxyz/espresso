@@ -1,7 +1,7 @@
 /**
  * @file server/routes.ts
  * @author Paul Fleury <hello@paulfleury.com>
- * @version 3.5.8
+ * @version 3.5.9
  *
  * Cup of News — REST API Routes
  *
@@ -42,6 +42,7 @@ import { storage } from "./storage";
 import type { DigestStory } from "@shared/schema";
 import { runDailyPipeline, swapStory, reprocessDigestImages } from "./pipeline";
 import { rehostImage, ensureImagesDir, deleteCachedImage } from "./images";
+import { reprocessQueue } from "./reprocess-queue";
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 
@@ -120,7 +121,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
    * Public. Used by uptime monitors, Docker HEALTHCHECK, GitHub Actions.
    */
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", version: "3.5.8" });
+    res.json({ status: "ok", version: "3.5.9" });
   });
 
   // ── Setup ──────────────────────────────────────────────────────────────────
@@ -844,45 +845,77 @@ export function registerRoutes(httpServer: Server, app: Express) {
   /**
    * POST /api/digest/:id/reprocess-images
    * Admin. Re-fetch and rehost images for all stories in a digest.
-   * Fixes broken, irrelevant, or externally-hosted images.
-   * Runs per-story: fetches OG from source → rehosts as WebP.
-   * Falls back to Wikimedia (via full pipeline) or SVG if OG fails.
+   *
+   * Default (v3.5.9): enqueues job and returns immediately with { queued, position, jobId }.
+   * With ?sync=true: runs synchronously (backwards compat for scripts).
    *
    * Body: { force?: boolean }
-   *   force=true: deletes cached WebP files and re-runs the full image pipeline
-   *   for already-hosted images (re-crops with current entropy strategy).
+   *   force=true: deletes cached WebP files and re-runs the full image pipeline.
+   *
+   * Rate limit: 2 digest reprocesses per hour. Returns 429 if exceeded.
+   * Duplicate: returns 200 with { duplicate: true } if digest already in queue.
    */
   app.post("/api/digest/:id/reprocess-images", requireApiKey, async (req, res) => {
-    const digest = storage.getDigest(Number(req.params.id));
+    const digestId = Number(req.params.id);
+    const digest = storage.getDigest(digestId);
     if (!digest) return res.status(404).json({ error: "Digest not found" });
 
     const force = req.body?.force === true;
-    const apiKey = storage.getConfig("openrouter_key") || "";
-    const stories: DigestStory[] = JSON.parse(digest.storiesJson);
-    const results: Array<{ title: string; imageUrl: string; changed: boolean }> = [];
+    const sync = req.query.sync === "true";
 
-    for (const story of stories) {
-      const oldUrl = story.imageUrl;
+    // ── Synchronous mode (?sync=true) — backwards compat ──
+    if (sync) {
+      const apiKey = storage.getConfig("openrouter_key") || "";
+      const stories: DigestStory[] = JSON.parse(digest.storiesJson);
+      const results: Array<{ title: string; imageUrl: string; changed: boolean }> = [];
 
-      // Force mode: delete cached file and clear imageUrl so reprocessDigestImages re-runs
-      if (force && story.imageUrl.startsWith("/images/")) {
-        const hash = path.basename(story.imageUrl, ".webp");
-        deleteCachedImage(hash);
-        story.imageUrl = "";  // clear so reprocessDigestImages doesn't skip it
+      for (const story of stories) {
+        const oldUrl = story.imageUrl;
+
+        if (force && story.imageUrl.startsWith("/images/")) {
+          const hash = path.basename(story.imageUrl, ".webp");
+          deleteCachedImage(hash);
+          story.imageUrl = "";
+        }
+
+        try {
+          const newUrl = await reprocessDigestImages(story, apiKey);
+          story.imageUrl = newUrl;
+          results.push({ title: story.title.slice(0, 50), imageUrl: newUrl, changed: newUrl !== oldUrl });
+        } catch (e: any) {
+          story.imageUrl = oldUrl;
+          results.push({ title: story.title.slice(0, 50), imageUrl: oldUrl, changed: false });
+        }
       }
 
-      try {
-        const newUrl = await reprocessDigestImages(story, apiKey);
-        story.imageUrl = newUrl;
-        results.push({ title: story.title.slice(0, 50), imageUrl: newUrl, changed: newUrl !== oldUrl });
-      } catch (e: any) {
-        story.imageUrl = oldUrl;  // restore on error
-        results.push({ title: story.title.slice(0, 50), imageUrl: oldUrl, changed: false });
-      }
+      storage.updateDigest(digest.id, { storiesJson: JSON.stringify(stories) });
+      return res.json({ success: true, results });
     }
 
-    storage.updateDigest(digest.id, { storiesJson: JSON.stringify(stories) });
-    res.json({ success: true, results });
+    // ── Async mode (default) — enqueue and return immediately ──
+    const result = reprocessQueue.enqueue(digestId, force);
+
+    if ("rateLimited" in result) {
+      return res.status(429).json({
+        error: "rate_limited",
+        retryAfter: result.retryAfter,
+      });
+    }
+
+    if ("duplicate" in result) {
+      return res.json({ duplicate: true, position: result.position });
+    }
+
+    res.json({ queued: true, position: result.position, jobId: result.jobId });
+  });
+
+  /**
+   * GET /api/reprocess/status
+   * Public (read-only). Returns current reprocess queue state.
+   * Shows running job, pending jobs, recent history, and rate limit info.
+   */
+  app.get("/api/reprocess/status", (_req, res) => {
+    res.json(reprocessQueue.getStatus());
   });
 
   /**
